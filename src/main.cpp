@@ -203,10 +203,474 @@ int test_natives()
     return 0;
 }
 
+int test_global_variables()
+{
+    printf("=== Global Variables Test ===\n\n");
+
+    Function mainFunc("main");
+    Chunk &chunk = mainFunc.chunk;
+
+    int line = 1;
+
+    // var x = 10;
+    printf("1. var x = 10\n");
+    int valIdx = chunk.addConstant(Value::makeInt(10));
+    chunk.write(OP_CONSTANT, line);
+    chunk.write(valIdx, line);
+
+    int nameIdx = chunk.addConstant(Value::makeString("x"));
+    chunk.write(OP_DEFINE_GLOBAL, line);
+    chunk.write(nameIdx, line);
+
+    // var y = 20;
+    printf("2. var y = 20\n");
+    valIdx = chunk.addConstant(Value::makeInt(20));
+    chunk.write(OP_CONSTANT, line);
+    chunk.write(valIdx, line);
+
+    nameIdx = chunk.addConstant(Value::makeString("y"));
+    chunk.write(OP_DEFINE_GLOBAL, line);
+    chunk.write(nameIdx, line);
+
+    // print(x);
+    printf("3. print(x)\n");
+    nameIdx = chunk.addConstant(Value::makeString("x"));
+    chunk.write(OP_GET_GLOBAL, line);
+    chunk.write(nameIdx, line);
+    chunk.write(OP_PRINT, line);
+
+    // print(y);
+    printf("4. print(y)\n");
+    nameIdx = chunk.addConstant(Value::makeString("y"));
+    chunk.write(OP_GET_GLOBAL, line);
+    chunk.write(nameIdx, line);
+    chunk.write(OP_PRINT, line);
+
+    // x = 30;
+    printf("5. x = 30\n");
+    valIdx = chunk.addConstant(Value::makeInt(30));
+    chunk.write(OP_CONSTANT, line);
+    chunk.write(valIdx, line);
+
+    nameIdx = chunk.addConstant(Value::makeString("x"));
+    chunk.write(OP_SET_GLOBAL, line);
+    chunk.write(nameIdx, line);
+    chunk.write(OP_POP, line); // descarta valor da expressão
+
+    // print(x);
+    printf("6. print(x) - deve ser 30\n");
+    nameIdx = chunk.addConstant(Value::makeString("x"));
+    chunk.write(OP_GET_GLOBAL, line);
+    chunk.write(nameIdx, line);
+    chunk.write(OP_PRINT, line);
+
+    // var z;  (sem inicializar)
+    printf("7. var z; (nil automático)\n");
+    chunk.write(OP_NIL, line);
+    nameIdx = chunk.addConstant(Value::makeString("z"));
+    chunk.write(OP_DEFINE_GLOBAL, line);
+    chunk.write(nameIdx, line);
+
+    // print(z);
+    printf("8. print(z) - deve ser null\n");
+    nameIdx = chunk.addConstant(Value::makeString("z"));
+    chunk.write(OP_GET_GLOBAL, line);
+    chunk.write(nameIdx, line);
+    chunk.write(OP_PRINT, line);
+
+    chunk.write(OP_NIL, line);
+    chunk.write(OP_RETURN, line);
+
+    // Disassemble
+    printf("\n=== Bytecode ===\n");
+    Debug::disassembleChunk(chunk, "main");
+    printf("\n");
+
+    // Execute
+    VM vm;
+    printf("=== Execution ===\n");
+    vm.interpret(&mainFunc);
+
+    return 0;
+}
+
+void testRedefinition()
+{
+    printf("=== Test 1: Redefinition Error ===\n");
+
+    Function mainFunc("main");
+    Chunk &chunk = mainFunc.chunk;
+
+    // var x = 10;
+    int valIdx = chunk.addConstant(Value::makeInt(10));
+    chunk.write(OP_CONSTANT, 1);
+    chunk.write(valIdx, 1);
+
+    int nameIdx = chunk.addConstant(Value::makeString("x"));
+    chunk.write(OP_DEFINE_GLOBAL, 1);
+    chunk.write(nameIdx, 1);
+
+    // var x = 20;  // ERRO!
+    valIdx = chunk.addConstant(Value::makeInt(20));
+    chunk.write(OP_CONSTANT, 2);
+    chunk.write(valIdx, 2);
+
+    nameIdx = chunk.addConstant(Value::makeString("x"));
+    chunk.write(OP_DEFINE_GLOBAL, 2);
+    chunk.write(nameIdx, 2);
+
+    chunk.write(OP_NIL, 3);
+    chunk.write(OP_RETURN, 3);
+
+    VM vm;
+    vm.interpret(&mainFunc);
+    printf("\n");
+}
+
+void testUndefined()
+{
+    printf("=== Test 2: Undefined Variable Error ===\n");
+
+    Function mainFunc("main");
+    Chunk &chunk = mainFunc.chunk;
+
+    // print(nao_existe);  // ERRO!
+    int nameIdx = chunk.addConstant(Value::makeString("nao_existe"));
+    chunk.write(OP_GET_GLOBAL, 1);
+    chunk.write(nameIdx, 1);
+    chunk.write(OP_PRINT, 1);
+
+    chunk.write(OP_NIL, 2);
+    chunk.write(OP_RETURN, 2);
+
+    VM vm;
+    vm.interpret(&mainFunc);
+    printf("\n");
+}
+
+void testAssignUndefined()
+{
+    printf("=== Test 3: Assign to Undefined Error ===\n");
+
+    Function mainFunc("main");
+    Chunk &chunk = mainFunc.chunk;
+
+    // y = 100;  // ERRO! y não foi definida
+    int valIdx = chunk.addConstant(Value::makeInt(100));
+    chunk.write(OP_CONSTANT, 1);
+    chunk.write(valIdx, 1);
+
+    int nameIdx = chunk.addConstant(Value::makeString("y"));
+    chunk.write(OP_SET_GLOBAL, 1);
+    chunk.write(nameIdx, 1);
+
+    chunk.write(OP_NIL, 2);
+    chunk.write(OP_RETURN, 2);
+
+    VM vm;
+    vm.interpret(&mainFunc);
+    printf("\n");
+}
+
+int loopWithGlobals()
+{
+    printf("=== Loop with Globals Test ===\n\n");
+    printf("Code:\n");
+    printf("var counter = 0;\n");
+    printf("while (counter < 5) {\n");
+    printf("    print(counter);\n");
+    printf("    counter = counter + 1;\n");
+    printf("}\n\n");
+
+    Function mainFunc("main");
+    Chunk &chunk = mainFunc.chunk;
+
+    int line = 1;
+
+    // var counter = 0;
+    int valIdx = chunk.addConstant(Value::makeInt(0));
+    chunk.write(OP_CONSTANT, line);
+    chunk.write(valIdx, line);
+
+    int nameIdx = chunk.addConstant(Value::makeString("counter"));
+    chunk.write(OP_DEFINE_GLOBAL, line);
+    chunk.write(nameIdx, line);
+
+    // LOOP START
+    int loopStart = chunk.count();
+
+    // while (counter < 5)
+    nameIdx = chunk.addConstant(Value::makeString("counter"));
+    chunk.write(OP_GET_GLOBAL, line);
+    chunk.write(nameIdx, line);
+
+    valIdx = chunk.addConstant(Value::makeInt(5));
+    chunk.write(OP_CONSTANT, line);
+    chunk.write(valIdx, line);
+
+    chunk.write(OP_LESS, line);
+
+    // if false, jump to end
+    chunk.write(OP_JUMP_IF_FALSE, line);
+    int exitJump = chunk.count();
+    chunk.write(0, line); // placeholder
+    chunk.write(0, line);
+    chunk.write(OP_POP, line); // pop condition
+
+    // print(counter);
+    nameIdx = chunk.addConstant(Value::makeString("counter"));
+    chunk.write(OP_GET_GLOBAL, line);
+    chunk.write(nameIdx, line);
+    chunk.write(OP_PRINT, line);
+
+    // counter = counter + 1;
+    nameIdx = chunk.addConstant(Value::makeString("counter"));
+    chunk.write(OP_GET_GLOBAL, line);
+    chunk.write(nameIdx, line);
+
+    valIdx = chunk.addConstant(Value::makeInt(1));
+    chunk.write(OP_CONSTANT, line);
+    chunk.write(valIdx, line);
+
+    chunk.write(OP_ADD, line);
+
+    nameIdx = chunk.addConstant(Value::makeString("counter"));
+    chunk.write(OP_SET_GLOBAL, line);
+    chunk.write(nameIdx, line);
+    chunk.write(OP_POP, line); // descarta resultado
+
+    // Loop back
+    chunk.write(OP_LOOP, line);
+    int loopOffset = chunk.count() - loopStart + 2;
+    chunk.write((loopOffset >> 8) & 0xff, line);
+    chunk.write(loopOffset & 0xff, line);
+
+    // EXIT (patch jump)
+    int exitOffset = chunk.count() - exitJump - 2;
+    chunk.code[exitJump] = (exitOffset >> 8) & 0xff;
+    chunk.code[exitJump + 1] = exitOffset & 0xff;
+
+    chunk.write(OP_POP, line); // pop condition
+
+    chunk.write(OP_NIL, line);
+    chunk.write(OP_RETURN, line);
+
+    // Execute
+    VM vm;
+    printf("=== Execution ===\n");
+    vm.interpret(&mainFunc);
+
+    return 0;
+}
+
+int teste_functions()
+{
+    printf("=== Function Call Test ===\n\n");
+
+    VM vm;
+
+    // ===== FUNÇÃO: add(a, b) =====
+    Function *addFunc = new Function("add", 2); // arity = 2
+    Chunk &addChunk = addFunc->chunk;
+
+    // return a + b;
+    addChunk.write(OP_GET_LOCAL, 1);
+    addChunk.write(0, 1); // slot 0 = a
+
+    addChunk.write(OP_GET_LOCAL, 1);
+    addChunk.write(1, 1); // slot 1 = b
+
+    addChunk.write(OP_ADD, 1);
+    addChunk.write(OP_RETURN, 1);
+
+    // Registra função
+    vm.registerFunction("add", addFunc);
+
+    printf("Registered function: add(a, b)\n");
+
+    // ===== FUNÇÃO MAIN =====
+    Function mainFunc("main");
+    Chunk &mainChunk = mainFunc.chunk;
+
+    // print(add(10, 5));
+    printf("Code: print(add(10, 5))\n\n");
+
+    int valIdx = mainChunk.addConstant(Value::makeInt(10));
+    mainChunk.write(OP_CONSTANT, 1);
+    mainChunk.write(valIdx, 1);
+
+    valIdx = mainChunk.addConstant(Value::makeInt(5));
+    mainChunk.write(OP_CONSTANT, 1);
+    mainChunk.write(valIdx, 1);
+
+    int nameIdx = mainChunk.addConstant(Value::makeString("add"));
+    mainChunk.write(OP_CALL, 1);
+    mainChunk.write(nameIdx, 1);
+    mainChunk.write(2, 1); // 2 args
+
+    mainChunk.write(OP_PRINT, 1);
+
+    // print(add(100, 200));
+    printf("Code: print(add(100, 200))\n\n");
+
+    valIdx = mainChunk.addConstant(Value::makeInt(100));
+    mainChunk.write(OP_CONSTANT, 2);
+    mainChunk.write(valIdx, 2);
+
+    valIdx = mainChunk.addConstant(Value::makeInt(200));
+    mainChunk.write(OP_CONSTANT, 2);
+    mainChunk.write(valIdx, 2);
+
+    nameIdx = mainChunk.addConstant(Value::makeString("add"));
+    mainChunk.write(OP_CALL, 2);
+    mainChunk.write(nameIdx, 2);
+    mainChunk.write(2, 2);
+
+    mainChunk.write(OP_PRINT, 2);
+
+    mainChunk.write(OP_NIL, 3);
+    mainChunk.write(OP_RETURN, 3);
+
+    // Execute
+    printf("=== Execution ===\n");
+    vm.interpret(&mainFunc);
+
+    return 0;
+}
+
+
+ 
+int teste_fib() {
+    printf("=== Fibonacci Recursivo ===\n\n");
+    printf("fn fib(n) {\n");
+    printf("    if (n < 2) return n;\n");
+    printf("    return fib(n-1) + fib(n-2);\n");
+    printf("}\n\n");
+    
+    VM vm;
+    
+    // ===== FUNÇÃO: fib(n) =====
+    Function* fibFunc = new Function("fib", 1);  // arity = 1
+    Chunk& fibChunk = fibFunc->chunk;
+    
+    int line = 1;
+    
+    // if (n < 2)
+    fibChunk.write(OP_GET_LOCAL, line);
+    fibChunk.write(0, line);  // slot 0 = n
+    
+    int constIdx = fibChunk.addConstant(Value::makeInt(2));
+    fibChunk.write(OP_CONSTANT, line);
+    fibChunk.write(constIdx, line);
+    
+    fibChunk.write(OP_LESS, line);  // n < 2
+    
+    fibChunk.write(OP_JUMP_IF_FALSE, line);
+    int elseJump = fibChunk.count();
+    fibChunk.write(0, line);  // placeholder
+    fibChunk.write(0, line);
+    fibChunk.write(OP_POP, line);  // pop condition
+    
+    // THEN: return n;
+    fibChunk.write(OP_GET_LOCAL, line);
+    fibChunk.write(0, line);  // return n
+    fibChunk.write(OP_RETURN, line);
+    
+    // ELSE: patch jump
+    int elseOffset = fibChunk.count() - elseJump - 2;
+    fibChunk.code[elseJump] = (elseOffset >> 8) & 0xff;
+    fibChunk.code[elseJump + 1] = elseOffset & 0xff;
+    fibChunk.write(OP_POP, line);  // pop condition
+    
+    // return fib(n-1) + fib(n-2);
+    
+    // fib(n-1)
+    fibChunk.write(OP_GET_LOCAL, line);
+    fibChunk.write(0, line);  // n
+    
+    constIdx = fibChunk.addConstant(Value::makeInt(1));
+    fibChunk.write(OP_CONSTANT, line);
+    fibChunk.write(constIdx, line);
+    
+    fibChunk.write(OP_SUBTRACT, line);  // n - 1
+    
+    int nameIdx = fibChunk.addConstant(Value::makeString("fib"));
+    fibChunk.write(OP_CALL, line);
+    fibChunk.write(nameIdx, line);
+    fibChunk.write(1, line);  // 1 arg
+    
+    // fib(n-2)
+    fibChunk.write(OP_GET_LOCAL, line);
+    fibChunk.write(0, line);  // n
+    
+    constIdx = fibChunk.addConstant(Value::makeInt(2));
+    fibChunk.write(OP_CONSTANT, line);
+    fibChunk.write(constIdx, line);
+    
+    fibChunk.write(OP_SUBTRACT, line);  // n - 2
+    
+    nameIdx = fibChunk.addConstant(Value::makeString("fib"));
+    fibChunk.write(OP_CALL, line);
+    fibChunk.write(nameIdx, line);
+    fibChunk.write(1, line);  // 1 arg
+    
+    // fib(n-1) + fib(n-2)
+    fibChunk.write(OP_ADD, line);
+    fibChunk.write(OP_RETURN, line);
+    
+    // Registra função
+    vm.registerFunction("fib", fibFunc);
+    
+    // ===== MAIN =====
+    Function mainFunc("main");
+    Chunk& mainChunk = mainFunc.chunk;
+    
+    // Testa vários valores
+    for (int n = 0; n <= 20; n++) {
+        printf("Calculando fib(%d)...\n", n);
+        
+        constIdx = mainChunk.addConstant(Value::makeInt(n));
+        mainChunk.write(OP_CONSTANT, 1);
+        mainChunk.write(constIdx, 1);
+        
+        nameIdx = mainChunk.addConstant(Value::makeString("fib"));
+        mainChunk.write(OP_CALL, 1);
+        mainChunk.write(nameIdx, 1);
+        mainChunk.write(1, 1);
+        
+        mainChunk.write(OP_PRINT, 1);
+    }
+    
+    mainChunk.write(OP_NIL, 1);
+    mainChunk.write(OP_RETURN, 1);
+    
+    // Debug
+    printf("\n=== Bytecode da função fib ===\n");
+    Debug::disassembleChunk(fibChunk, "fib");
+    
+    // Execute
+    printf("\n=== Execution ===\n");
+    vm.interpret(&mainFunc);
+    
+    return 0;
+}
+
 int main()
 {
     // TestCalculator();
     // test_string();
-    test_natives();
+    // test_natives();
+
+    // test_global_variables();
+
+    //   testRedefinition();
+    //  testUndefined();
+    // testAssignUndefined();
+
+    //    loopWithGlobals();
+    // teste_functions();
+
+    teste_fib();
+
     return 0;
 }

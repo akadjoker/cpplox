@@ -66,6 +66,13 @@ int Debug::disassembleInstruction(const Chunk &chunk, int offset)
     case OP_SET_LOCAL:
         return byteInstruction("OP_SET_LOCAL", chunk, offset);
     case OP_JUMP:
+    case OP_DEFINE_GLOBAL:
+        return constantInstruction("OP_DEFINE_GLOBAL", chunk, offset);
+    case OP_GET_GLOBAL:
+        return constantInstruction("OP_GET_GLOBAL", chunk, offset);
+    case OP_SET_GLOBAL:
+        return constantInstruction("OP_SET_GLOBAL", chunk, offset);
+
         return jumpInstruction("OP_JUMP", 1, chunk, offset);
     case OP_JUMP_IF_FALSE:
         return jumpInstruction("OP_JUMP_IF_FALSE", 1, chunk, offset);
@@ -81,6 +88,17 @@ int Debug::disassembleInstruction(const Chunk &chunk, int offset)
                argCount);
         return offset + 3;
     }
+    case OP_CALL:
+    {
+        uint8_t nameIdx = chunk.code[offset + 1];
+        uint8_t argCount = chunk.code[offset + 2];
+        printf("%-16s %4d '%s' (%d args)\n", "OP_CALL",
+               nameIdx,
+               chunk.constants[nameIdx].asString()->c_str(),
+               argCount);
+        return offset + 3;
+    }
+
     case OP_RETURN:
         return simpleInstruction("OP_RETURN", offset);
     default:
