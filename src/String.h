@@ -34,6 +34,7 @@ public:
             std::memcpy(data_.ptr, str, len);
             data_.ptr[len] = '\0';
         }
+      
     }
 
     String(const String &other)
@@ -50,6 +51,7 @@ public:
         {
             std::memcpy(data_.buffer, other.data_.buffer, size_ + 1);
         }
+      
     }
 
     String(String &&other) noexcept

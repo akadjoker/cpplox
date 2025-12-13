@@ -5,13 +5,15 @@
 CallFrame::CallFrame()
     : function(nullptr), ip(nullptr), slots(nullptr) {}
 
-VM::VM() : stackTop_(stack_), frameCount_(0)
+VM::VM() : stackTop_(stack_), frameCount_(0), hasFatalError_(false)
 {
     natives_.registerBuiltins();
+   
 }
 
 VM::~VM()
 {
+    
     for (Function *func : functions_)
     {
         delete func;
@@ -27,25 +29,16 @@ uint16_t VM::registerFunction(const std::string &name, Function *func)
         return 0;
     }
 
- 
     auto it = functionNames_.find(name);
 
     if (it != functionNames_.end())
     {
-       
+
         fprintf(stderr, "Warning: Function '%s' already registered at index %d\n",
                 name.c_str(), it->second);
         return it->second;
-
-        /* ANTES (bugado):
-        fprintf(stderr, "Warning: Function '%s' already exists, overwriting\n", name.c_str());
-        uint16_t oldIdx = it->second;
-        delete functions_[oldIdx];  // ← BUG! Deleta mas caller ainda tem ponteiro!
-        functions_[oldIdx] = func;
-        return oldIdx;
-        */
     }
- 
+
     if (functions_.size() >= 65535)
     {
         runtimeError("Too many functions (max 65535)");
@@ -82,6 +75,7 @@ Function *VM::getFunction(uint16_t index)
 
 void VM::resetStack()
 {
+    hasFatalError_ = false;
     stackTop_ = stack_;
     frameCount_ = 0;
 }
@@ -178,444 +172,6 @@ bool VM::isTruthy(const Value &value)
     }
 }
 
-bool VM::run()
-{
-    CallFrame *frame = &frames_[frameCount_ - 1];
-
-#define READ_BYTE() (*frame->ip++)
-#define READ_SHORT() \
-    (frame->ip += 2, (uint16_t)((frame->ip[-2] << 8) | frame->ip[-1]))
-#define READ_CONSTANT() (frame->function->chunk.constants[READ_BYTE()])
-#define READ_STRING() (READ_CONSTANT().asString()->c_str())
-
-    for (;;)
-    {
-        uint8_t instruction = READ_BYTE();
-
-        switch (instruction)
-        {
-        case OP_CONSTANT:
-        {
-            Value constant = READ_CONSTANT();
-            push(constant);
-            break;
-        }
-
-        case OP_NIL:
-            push(Value::makeNull());
-            break;
-
-        case OP_TRUE:
-            push(Value::makeBool(true));
-            break;
-
-        case OP_FALSE:
-            push(Value::makeBool(false));
-            break;
-
-        case OP_POP:
-            pop();
-            break;
-
-        case OP_ADD:
-        {
-            Value b = pop();
-            Value a = pop();
-
-            if (a.isString() && b.isString())
-            {
-                String result = *a.asString() + *b.asString();
-                push(Value::makeString(result));
-            }
-            else if (a.isInt() && b.isInt())
-            {
-                push(Value::makeInt(a.asInt() + b.asInt()));
-            }
-            else if (a.isDouble() || b.isDouble())
-            {
-                double da = a.asDouble();
-                double db = b.asDouble();
-                push(Value::makeDouble(da + db));
-            }
-            else if (a.isDouble() || b.isInt())
-            {
-                double fa = a.asDouble();
-                int fb = b.isInt();
-                push(Value::makeDouble(fa + fb));
-            }
-            else if (a.isInt() || b.isDouble())
-            {
-                int fa = a.isInt();
-                int fb = b.asDouble();
-                push(Value::makeInt(fa + fb));
-            }
-
-            else
-            {
-                runtimeError("Operands must be numbers or strings");
-                return false;
-            }
-            break;
-        }
-
-        case OP_SUBTRACT:
-        {
-            Value b = pop();
-            Value a = pop();
-            if (a.isInt() && b.isInt())
-            {
-                push(Value::makeInt(a.asInt() - b.asInt()));
-            }
-            else
-            {
-                double da = a.isInt() ? a.asInt() : a.asDouble();
-                double db = b.isInt() ? b.asInt() : b.asDouble();
-                push(Value::makeDouble(da - db));
-            }
-            break;
-        }
-
-        case OP_MULTIPLY:
-        {
-            Value b = pop();
-            Value a = pop();
-            if (a.isInt() && b.isInt())
-            {
-                push(Value::makeInt(a.asInt() * b.asInt()));
-            }
-            else
-            {
-                double da = a.isInt() ? a.asInt() : a.asDouble();
-                double db = b.isInt() ? b.asInt() : b.asDouble();
-                push(Value::makeDouble(da * db));
-            }
-            break;
-        }
-
-        case OP_DIVIDE:
-        {
-            Value b = pop();
-            Value a = pop();
-
-            int bInt = b.isInt() ? b.asInt() : (int)b.asDouble();
-            if (bInt == 0)
-            {
-                runtimeError("Division by zero");
-                return false;
-            }
-
-            if (a.isInt() && b.isInt())
-            {
-                push(Value::makeInt(a.asInt() / b.asInt()));
-            }
-            else
-            {
-                double da = a.isInt() ? a.asInt() : a.asDouble();
-                double db = b.isInt() ? b.asInt() : b.asDouble();
-                push(Value::makeDouble(da / db));
-            }
-            break;
-        }
-
-        case OP_NEGATE:
-        {
-            Value a = pop();
-            if (a.isInt())
-            {
-                push(Value::makeInt(-a.asInt()));
-            }
-            else
-            {
-                push(Value::makeDouble(-a.asDouble()));
-            }
-            break;
-        }
-
-        case OP_EQUAL:
-        {
-            Value b = pop();
-            Value a = pop();
-
-            if (a.type != b.type)
-            {
-                push(Value::makeBool(false));
-            }
-            else if (a.isInt())
-            {
-                push(Value::makeBool(a.asInt() == b.asInt()));
-            }
-            else if (a.isBool())
-            {
-                push(Value::makeBool(a.asBool() == b.asBool()));
-            }
-            else if (a.isNull())
-            {
-                push(Value::makeBool(true));
-            }
-            else if (a.isString())
-            {
-                push(Value::makeBool(*a.asString() == *b.asString()));
-            }
-            else
-            {
-                push(Value::makeBool(false));
-            }
-            break;
-        }
-
-        case OP_NOT_EQUAL:
-        {
-            Value b = pop();
-            Value a = pop();
-
-            if (a.type != b.type)
-            {
-                push(Value::makeBool(true));
-            }
-            else if (a.isInt())
-            {
-                push(Value::makeBool(a.asInt() != b.asInt()));
-            }
-            else if (a.isBool())
-            {
-                push(Value::makeBool(a.asBool() != b.asBool()));
-            }
-            else if (a.isString())
-            {
-                push(Value::makeBool(*a.asString() != *b.asString()));
-            }
-            else
-            {
-                push(Value::makeBool(false));
-            }
-            break;
-        }
-
-        case OP_GREATER:
-        {
-            Value b = pop();
-            Value a = pop();
-
-            if (a.isInt() && b.isInt())
-            {
-                push(Value::makeBool(a.asInt() > b.asInt()));
-            }
-            else
-            {
-                double da = a.isInt() ? a.asInt() : a.asDouble();
-                double db = b.isInt() ? b.asInt() : b.asDouble();
-                push(Value::makeBool(da > db));
-            }
-            break;
-        }
-
-        case OP_GREATER_EQUAL:
-        {
-            Value b = pop();
-            Value a = pop();
-
-            if (a.isInt() && b.isInt())
-            {
-                push(Value::makeBool(a.asInt() >= b.asInt()));
-            }
-            else
-            {
-                double da = a.isInt() ? a.asInt() : a.asDouble();
-                double db = b.isInt() ? b.asInt() : b.asDouble();
-                push(Value::makeBool(da >= db));
-            }
-            break;
-        }
-
-        case OP_LESS:
-        {
-            Value b = pop();
-            Value a = pop();
-
-            if (a.isInt() && b.isInt())
-            {
-                push(Value::makeBool(a.asInt() < b.asInt()));
-            }
-            else
-            {
-                double da = a.isInt() ? a.asInt() : a.asDouble();
-                double db = b.isInt() ? b.asInt() : b.asDouble();
-                push(Value::makeBool(da < db));
-            }
-            break;
-        }
-
-        case OP_LESS_EQUAL:
-        {
-            Value b = pop();
-            Value a = pop();
-
-            if (a.isInt() && b.isInt())
-            {
-                push(Value::makeBool(a.asInt() <= b.asInt()));
-            }
-            else
-            {
-                double da = a.isInt() ? a.asInt() : a.asDouble();
-                double db = b.isInt() ? b.asInt() : b.asDouble();
-                push(Value::makeBool(da <= db));
-            }
-            break;
-        }
-
-        case OP_PRINT:
-        {
-            printValue(pop());
-            printf("\n");
-            break;
-        }
-
-        case OP_GET_LOCAL:
-        {
-            uint8_t slot = READ_BYTE();
-            push(frame->slots[slot]);
-            break;
-        }
-
-        case OP_SET_LOCAL:
-        {
-            uint8_t slot = READ_BYTE();
-            frame->slots[slot] = peek(0);
-            break;
-        }
-        case OP_DEFINE_GLOBAL:
-        {
-            std::string name = READ_STRING();
-            Value value = pop();
-
-            if (globals_.count(name))
-            {
-                runtimeError("Variable '%s' already defined", name.c_str());
-                return false;
-            }
-
-            globals_[name] = value;
-            break;
-        }
-
-        case OP_GET_GLOBAL:
-        {
-            std::string name = READ_STRING();
-
-            auto it = globals_.find(name);
-            if (it == globals_.end())
-            {
-                runtimeError("Undefined variable '%s'", name.c_str());
-                return false;
-            }
-
-            push(it->second);
-            break;
-        }
-
-        case OP_SET_GLOBAL:
-        {
-            std::string name = READ_STRING();
-
-            if (!globals_.count(name))
-            {
-                runtimeError("Undefined variable '%s'", name.c_str());
-                return false;
-            }
-
-            globals_[name] = peek(0); // não faz pop!
-            break;
-        }
-
-        case OP_JUMP:
-        {
-            uint16_t offset = READ_SHORT();
-            frame->ip += offset;
-            break;
-        }
-
-        case OP_JUMP_IF_FALSE:
-        {
-            uint16_t offset = READ_SHORT();
-            if (!isTruthy(peek(0)))
-            {
-                frame->ip += offset;
-            }
-            break;
-        }
-
-        case OP_LOOP:
-        {
-            uint16_t offset = READ_SHORT();
-            frame->ip -= offset;
-            break;
-        }
-
-        case OP_CALL_NATIVE:
-        {
-            std::string name = READ_STRING();
-            uint8_t argCount = READ_BYTE();
-
-            if (!callNative(name, argCount))
-            {
-                return false;
-            }
-            break;
-        }
-        case OP_CALL:
-        {
-            std::string name = READ_STRING();
-            uint8_t argCount = READ_BYTE();
-
-            // Lookup função
-            auto it = functionNames_.find(name);
-            if (it == functionNames_.end())
-            {
-                runtimeError("Undefined function '%s'", name.c_str());
-                return false;
-            }
-
-            Function *function = functions_[it->second];
-
-            if (!callFunction(function, argCount))
-            {
-                return false;
-            }
-
-            // Atualiza frame pointer
-            frame = &frames_[frameCount_ - 1];
-            break;
-        }
-
-        case OP_RETURN:
-        {
-            Value result = pop();
-            frameCount_--;
-
-            if (frameCount_ == 0)
-            {
-                stackTop_ = stack_;
-                return true;
-            }
-
-            stackTop_ = frame->slots;
-            push(result);
-            frame = &frames_[frameCount_ - 1];
-            break;
-        }
-
-        default:
-            runtimeError("Unknown opcode: %d", instruction);
-            return false;
-        }
-    }
-
-#undef READ_BYTE
-#undef READ_SHORT
-#undef READ_CONSTANT
-#undef READ_STRING
-}
-
 void VM::push(Value value)
 {
     if (stackTop_ >= stack_ + STACK_MAX)
@@ -657,6 +213,7 @@ const Value &VM::peek(int distance)
 
 void VM::runtimeError(const char *format, ...)
 {
+    hasFatalError_ = true;
     fprintf(stderr, "Runtime Error: ");
 
     va_list args;
@@ -1031,458 +588,6 @@ void VM::Call(int argCount, int resultCount)
     }
 }
 
-bool VM::executeUntilReturn(int targetFrameCount)
-{
-    while (frameCount_ > targetFrameCount)
-    {
-        CallFrame *frame = &frames_[frameCount_ - 1];
-#define READ_BYTE() (*frame->ip++)
-#define READ_SHORT() (frame->ip += 2, (uint16_t)((frame->ip[-2] << 8) | frame->ip[-1]))
-#define READ_CONSTANT() (frame->function->chunk.constants[READ_BYTE()])
-#define READ_STRING() (READ_CONSTANT().asString()->c_str())
-        uint8_t instruction = *frame->ip++;
-        switch (instruction)
-        {
-        case OP_CONSTANT:
-        {
-            Value constant = READ_CONSTANT();
-            push(constant);
-            break;
-        }
-
-        case OP_NIL:
-            push(Value::makeNull());
-            break;
-
-        case OP_TRUE:
-            push(Value::makeBool(true));
-            break;
-
-        case OP_FALSE:
-            push(Value::makeBool(false));
-            break;
-
-        case OP_POP:
-            pop();
-            break;
-
-        case OP_ADD:
-        {
-            Value b = pop();
-            Value a = pop();
-
-            if (a.isString() && b.isString())
-            {
-                String result = *a.asString() + *b.asString();
-                push(Value::makeString(result));
-            }
-            else if (a.isInt() && b.isInt())
-            {
-                push(Value::makeInt(a.asInt() + b.asInt()));
-            }
-            else if (a.isDouble() || b.isDouble())
-            {
-                double da = a.asDouble();
-                double db = b.asDouble();
-                push(Value::makeDouble(da + db));
-            }
-            else if (a.isDouble() || b.isInt())
-            {
-                double fa = a.asDouble();
-                int fb = b.isInt();
-                push(Value::makeDouble(fa + fb));
-            }
-            else if (a.isInt() || b.isDouble())
-            {
-                int fa = a.isInt();
-                int fb = b.asDouble();
-                push(Value::makeInt(fa + fb));
-            }
-
-            else
-            {
-                runtimeError("Operands must be numbers or strings");
-                return false;
-            }
-            break;
-        }
-
-        case OP_SUBTRACT:
-        {
-            Value b = pop();
-            Value a = pop();
-            if (a.isInt() && b.isInt())
-            {
-                push(Value::makeInt(a.asInt() - b.asInt()));
-            }
-            else
-            {
-                double da = a.isInt() ? a.asInt() : a.asDouble();
-                double db = b.isInt() ? b.asInt() : b.asDouble();
-                push(Value::makeDouble(da - db));
-            }
-            break;
-        }
-
-        case OP_MULTIPLY:
-        {
-            Value b = pop();
-            Value a = pop();
-            if (a.isInt() && b.isInt())
-            {
-                push(Value::makeInt(a.asInt() * b.asInt()));
-            }
-            else
-            {
-                double da = a.isInt() ? a.asInt() : a.asDouble();
-                double db = b.isInt() ? b.asInt() : b.asDouble();
-                push(Value::makeDouble(da * db));
-            }
-            break;
-        }
-
-        case OP_DIVIDE:
-        {
-            Value b = pop();
-            Value a = pop();
-
-            int bInt = b.isInt() ? b.asInt() : (int)b.asDouble();
-            if (bInt == 0)
-            {
-                runtimeError("Division by zero");
-                return false;
-            }
-
-            if (a.isInt() && b.isInt())
-            {
-                push(Value::makeInt(a.asInt() / b.asInt()));
-            }
-            else
-            {
-                double da = a.isInt() ? a.asInt() : a.asDouble();
-                double db = b.isInt() ? b.asInt() : b.asDouble();
-                push(Value::makeDouble(da / db));
-            }
-            break;
-        }
-
-        case OP_NEGATE:
-        {
-            Value a = pop();
-            if (a.isInt())
-            {
-                push(Value::makeInt(-a.asInt()));
-            }
-            else
-            {
-                push(Value::makeDouble(-a.asDouble()));
-            }
-            break;
-        }
-
-        case OP_EQUAL:
-        {
-            Value b = pop();
-            Value a = pop();
-
-            if (a.type != b.type)
-            {
-                push(Value::makeBool(false));
-            }
-            else if (a.isInt())
-            {
-                push(Value::makeBool(a.asInt() == b.asInt()));
-            }
-            else if (a.isBool())
-            {
-                push(Value::makeBool(a.asBool() == b.asBool()));
-            }
-            else if (a.isNull())
-            {
-                push(Value::makeBool(true));
-            }
-            else if (a.isString())
-            {
-                push(Value::makeBool(*a.asString() == *b.asString()));
-            }
-            else
-            {
-                push(Value::makeBool(false));
-            }
-            break;
-        }
-
-        case OP_NOT_EQUAL:
-        {
-            Value b = pop();
-            Value a = pop();
-
-            if (a.type != b.type)
-            {
-                push(Value::makeBool(true));
-            }
-            else if (a.isInt())
-            {
-                push(Value::makeBool(a.asInt() != b.asInt()));
-            }
-            else if (a.isBool())
-            {
-                push(Value::makeBool(a.asBool() != b.asBool()));
-            }
-            else if (a.isString())
-            {
-                push(Value::makeBool(*a.asString() != *b.asString()));
-            }
-            else
-            {
-                push(Value::makeBool(false));
-            }
-            break;
-        }
-
-        case OP_GREATER:
-        {
-            Value b = pop();
-            Value a = pop();
-
-            if (a.isInt() && b.isInt())
-            {
-                push(Value::makeBool(a.asInt() > b.asInt()));
-            }
-            else
-            {
-                double da = a.isInt() ? a.asInt() : a.asDouble();
-                double db = b.isInt() ? b.asInt() : b.asDouble();
-                push(Value::makeBool(da > db));
-            }
-            break;
-        }
-
-        case OP_GREATER_EQUAL:
-        {
-            Value b = pop();
-            Value a = pop();
-
-            if (a.isInt() && b.isInt())
-            {
-                push(Value::makeBool(a.asInt() >= b.asInt()));
-            }
-            else
-            {
-                double da = a.isInt() ? a.asInt() : a.asDouble();
-                double db = b.isInt() ? b.asInt() : b.asDouble();
-                push(Value::makeBool(da >= db));
-            }
-            break;
-        }
-
-        case OP_LESS:
-        {
-            Value b = pop();
-            Value a = pop();
-
-            if (a.isInt() && b.isInt())
-            {
-                push(Value::makeBool(a.asInt() < b.asInt()));
-            }
-            else
-            {
-                double da = a.isInt() ? a.asInt() : a.asDouble();
-                double db = b.isInt() ? b.asInt() : b.asDouble();
-                push(Value::makeBool(da < db));
-            }
-            break;
-        }
-
-        case OP_LESS_EQUAL:
-        {
-            Value b = pop();
-            Value a = pop();
-
-            if (a.isInt() && b.isInt())
-            {
-                push(Value::makeBool(a.asInt() <= b.asInt()));
-            }
-            else
-            {
-                double da = a.isInt() ? a.asInt() : a.asDouble();
-                double db = b.isInt() ? b.asInt() : b.asDouble();
-                push(Value::makeBool(da <= db));
-            }
-            break;
-        }
-
-        case OP_PRINT:
-        {
-            printValue(pop());
-            printf("\n");
-            break;
-        }
-
-        case OP_GET_LOCAL:
-        {
-            uint8_t slot = READ_BYTE();
-            push(frame->slots[slot]);
-            break;
-        }
-
-        case OP_SET_LOCAL:
-        {
-            uint8_t slot = READ_BYTE();
-            frame->slots[slot] = peek(0);
-            break;
-        }
-        case OP_DEFINE_GLOBAL:
-        {
-            std::string name = READ_STRING();
-            Value value = pop();
-
-            if (globals_.count(name))
-            {
-                runtimeError("Variable '%s' already defined", name.c_str());
-                return false;
-            }
-
-            globals_[name] = value;
-            break;
-        }
-
-        case OP_GET_GLOBAL:
-        {
-            std::string name = READ_STRING();
-
-            auto it = globals_.find(name);
-            if (it == globals_.end())
-            {
-                runtimeError("Undefined variable '%s'", name.c_str());
-                return false;
-            }
-
-            push(it->second);
-            break;
-        }
-
-        case OP_SET_GLOBAL:
-        {
-            std::string name = READ_STRING();
-
-            if (!globals_.count(name))
-            {
-                runtimeError("Undefined variable '%s'", name.c_str());
-                return false;
-            }
-
-            globals_[name] = peek(0); // não faz pop!
-            break;
-        }
-
-        case OP_JUMP:
-        {
-            uint16_t offset = READ_SHORT();
-            frame->ip += offset;
-            break;
-        }
-
-        case OP_JUMP_IF_FALSE:
-        {
-            uint16_t offset = READ_SHORT();
-            if (!isTruthy(peek(0)))
-            {
-                frame->ip += offset;
-            }
-            break;
-        }
-
-        case OP_LOOP:
-        {
-            uint16_t offset = READ_SHORT();
-            frame->ip -= offset;
-            break;
-        }
-
-        case OP_CALL_NATIVE:
-        {
-            std::string name = READ_STRING();
-            uint8_t argCount = READ_BYTE();
-
-            if (!callNative(name, argCount))
-            {
-                return false;
-            }
-            break;
-        }
-        case OP_CALL:
-        {
-            std::string name = READ_STRING();
-            uint8_t argCount = READ_BYTE();
-
-            // Lookup função
-            auto it = functionNames_.find(name);
-            if (it == functionNames_.end())
-            {
-                runtimeError("Undefined function '%s'", name.c_str());
-                return false;
-            }
-
-            Function *function = functions_[it->second];
-
-            if (!callFunction(function, argCount))
-            {
-                return false;
-            }
-
-            // Atualiza frame pointer
-            frame = &frames_[frameCount_ - 1];
-            break;
-        }
-
-        case OP_RETURN:
-        {
-            Value result = pop();
-            frameCount_--;
-
-            if (frameCount_ <= targetFrameCount)
-            {
-
-                if (frameCount_ == 0)
-                {
-                    stackTop_ = stack_;
-                }
-                else
-                {
-                    stackTop_ = frames_[frameCount_].slots;
-                }
-
-                push(result);
-
-#undef READ_BYTE
-#undef READ_SHORT
-#undef READ_CONSTANT
-#undef READ_STRING
-                return true;
-            }
-
-            // Retornou de subcall, continua execução
-            stackTop_ = frame->slots;
-            push(result);
-            frame = &frames_[frameCount_ - 1];
-            break;
-        }
-
-        default:
-            runtimeError("Unknown opcode: %d", instruction);
-            return false;
-        }
-
-#undef READ_BYTE
-#undef READ_SHORT
-#undef READ_CONSTANT
-#undef READ_STRING
-    }
-
-    return true;
-}
-
 // Debug
 void VM::DumpStack()
 {
@@ -1564,4 +669,577 @@ const char *VM::TypeName(ValueType type)
     default:
         return "unknown";
     }
+}
+
+// ============================================
+// RUN: Loop principal da VM
+// ============================================
+bool VM::run()
+{
+    CallFrame *frame = &frames_[frameCount_ - 1];
+
+    while (frameCount_ > 0)
+    {
+        if (!executeInstruction(frame))
+        {
+            return false; // Erro fatal
+        }
+    }
+
+    return true;
+}
+
+// ============================================
+// EXECUTE UNTIL RETURN: Para API pública (Call)
+// ============================================
+bool VM::executeUntilReturn(int targetFrameCount)
+{
+    while (frameCount_ > targetFrameCount)
+    {
+        CallFrame *frame = &frames_[frameCount_ - 1];
+
+        if (!executeInstruction(frame))
+        {
+            return false; // Erro fatal
+        }
+    }
+
+    return true;
+}
+
+// ============================================
+// CORE: Executa UMA instrução
+// ============================================
+bool VM::executeInstruction(CallFrame *&frame)
+{
+    if (hasFatalError_)
+        return false;
+
+#define READ_BYTE() (*frame->ip++)
+#define READ_SHORT() \
+    (frame->ip += 2, (uint16_t)((frame->ip[-2] << 8) | frame->ip[-1]))
+#define READ_CONSTANT() (frame->function->chunk.constants[READ_BYTE()])
+#define READ_STRING() (READ_CONSTANT().asString()->c_str())
+
+    uint8_t instruction = READ_BYTE();
+
+    switch (instruction)
+    {
+    case OP_CONSTANT:
+    {
+        Value constant = READ_CONSTANT();
+        push(constant);
+        break;
+    }
+
+    case OP_NIL:
+        push(Value::makeNull());
+        break;
+
+    case OP_TRUE:
+        push(Value::makeBool(true));
+        break;
+
+    case OP_FALSE:
+        push(Value::makeBool(false));
+        break;
+
+    case OP_POP:
+        pop();
+        break;
+
+    case OP_ADD:
+    {
+        Value b = pop();
+        Value a = pop();
+
+        // String concatenation
+        if (a.isString() && b.isString())
+        {
+            String result = *a.asString() + *b.asString();
+            push(Value::makeString(result));
+        }
+        // Int + Int = Int
+        else if (a.isInt() && b.isInt())
+        {
+            push(Value::makeInt(a.asInt() + b.asInt()));
+        }
+        // Double + Double = Double
+        else if (a.isDouble() && b.isDouble())
+        {
+            push(Value::makeDouble(a.asDouble() + b.asDouble()));
+        }
+        // Int + Double = Double
+        else if (a.isInt() && b.isDouble())
+        {
+            push(Value::makeDouble(a.asInt() + b.asDouble()));
+        }
+        // Double + Int = Double
+        else if (a.isDouble() && b.isInt())
+        {
+            push(Value::makeDouble(a.asDouble() + b.asInt()));
+        }
+        else
+        {
+            runtimeError("Operands must be numbers or strings");
+            return false;
+        }
+        break;
+    }
+
+    case OP_SUBTRACT:
+    {
+        Value b = pop();
+        Value a = pop();
+
+        if (a.isInt() && b.isInt())
+        {
+            push(Value::makeInt(a.asInt() - b.asInt()));
+        }
+        else if (a.isDouble() && b.isDouble())
+        {
+            push(Value::makeDouble(a.asDouble() - b.asDouble()));
+        }
+        else if (a.isInt() && b.isDouble())
+        {
+            push(Value::makeDouble(a.asInt() - b.asDouble()));
+        }
+        else if (a.isDouble() && b.isInt())
+        {
+            push(Value::makeDouble(a.asDouble() - b.asInt()));
+        }
+        else
+        {
+            runtimeError("Operands must be numbers");
+            return false;
+        }
+        break;
+    }
+
+    case OP_MULTIPLY:
+    {
+        Value b = pop();
+        Value a = pop();
+
+        if (a.isInt() && b.isInt())
+        {
+            push(Value::makeInt(a.asInt() * b.asInt()));
+        }
+        else if (a.isDouble() && b.isDouble())
+        {
+            push(Value::makeDouble(a.asDouble() * b.asDouble()));
+        }
+        else if (a.isInt() && b.isDouble())
+        {
+            push(Value::makeDouble(a.asInt() * b.asDouble()));
+        }
+        else if (a.isDouble() && b.isInt())
+        {
+            push(Value::makeDouble(a.asDouble() * b.asInt()));
+        }
+        else
+        {
+            runtimeError("Operands must be numbers");
+            return false;
+        }
+        break;
+    }
+
+    case OP_DIVIDE:
+    {
+        Value b = pop();
+        Value a = pop();
+
+        // Check division by zero
+        if ((b.isInt() && b.asInt() == 0) ||
+            (b.isDouble() && b.asDouble() == 0.0))
+        {
+            runtimeError("Division by zero");
+            return false;
+        }
+
+        if (a.isInt() && b.isInt())
+        {
+            push(Value::makeInt(a.asInt() / b.asInt()));
+        }
+        else if (a.isDouble() && b.isDouble())
+        {
+            push(Value::makeDouble(a.asDouble() / b.asDouble()));
+        }
+        else if (a.isInt() && b.isDouble())
+        {
+            push(Value::makeDouble(a.asInt() / b.asDouble()));
+        }
+        else if (a.isDouble() && b.isInt())
+        {
+            push(Value::makeDouble(a.asDouble() / b.asInt()));
+        }
+        else
+        {
+            runtimeError("Operands must be numbers");
+            return false;
+        }
+        break;
+    }
+
+    case OP_NEGATE:
+    {
+        Value a = pop();
+        if (a.isInt())
+        {
+            push(Value::makeInt(-a.asInt()));
+        }
+        else if (a.isDouble())
+        {
+            push(Value::makeDouble(-a.asDouble()));
+        }
+        else
+        {
+            runtimeError("Operand must be a number");
+            return false;
+        }
+        break;
+    }
+
+    case OP_EQUAL:
+    {
+        Value b = pop();
+        Value a = pop();
+
+        if (a.type != b.type)
+        {
+            push(Value::makeBool(false));
+        }
+        else if (a.isInt())
+        {
+            push(Value::makeBool(a.asInt() == b.asInt()));
+        }
+        else if (a.isBool())
+        {
+            push(Value::makeBool(a.asBool() == b.asBool()));
+        }
+        else if (a.isNull())
+        {
+            push(Value::makeBool(true));
+        }
+        else if (a.isString())
+        {
+            push(Value::makeBool(*a.asString() == *b.asString()));
+        }
+        else if (a.isDouble())
+        {
+            push(Value::makeBool(a.asDouble() == b.asDouble()));
+        }
+        else
+        {
+            push(Value::makeBool(false));
+        }
+        break;
+    }
+
+    case OP_NOT_EQUAL:
+    {
+        Value b = pop();
+        Value a = pop();
+
+        if (a.type != b.type)
+        {
+            push(Value::makeBool(true));
+        }
+        else if (a.isInt())
+        {
+            push(Value::makeBool(a.asInt() != b.asInt()));
+        }
+        else if (a.isBool())
+        {
+            push(Value::makeBool(a.asBool() != b.asBool()));
+        }
+        else if (a.isString())
+        {
+            push(Value::makeBool(*a.asString() != *b.asString()));
+        }
+        else if (a.isDouble())
+        {
+            push(Value::makeBool(a.asDouble() != b.asDouble()));
+        }
+        else
+        {
+            push(Value::makeBool(false));
+        }
+        break;
+    }
+
+    case OP_GREATER:
+    {
+        Value b = pop();
+        Value a = pop();
+
+        if (a.isInt() && b.isInt())
+        {
+            push(Value::makeBool(a.asInt() > b.asInt()));
+        }
+        else if (a.isDouble() && b.isDouble())
+        {
+            push(Value::makeBool(a.asDouble() > b.asDouble()));
+        }
+        else if (a.isInt() && b.isDouble())
+        {
+            push(Value::makeBool(a.asInt() > b.asDouble()));
+        }
+        else if (a.isDouble() && b.isInt())
+        {
+            push(Value::makeBool(a.asDouble() > b.asInt()));
+        }
+        else
+        {
+            runtimeError("Operands must be numbers");
+            return false;
+        }
+        break;
+    }
+
+    case OP_GREATER_EQUAL:
+    {
+        Value b = pop();
+        Value a = pop();
+
+        if (a.isInt() && b.isInt())
+        {
+            push(Value::makeBool(a.asInt() >= b.asInt()));
+        }
+        else if (a.isDouble() && b.isDouble())
+        {
+            push(Value::makeBool(a.asDouble() >= b.asDouble()));
+        }
+        else if (a.isInt() && b.isDouble())
+        {
+            push(Value::makeBool(a.asInt() >= b.asDouble()));
+        }
+        else if (a.isDouble() && b.isInt())
+        {
+            push(Value::makeBool(a.asDouble() >= b.asInt()));
+        }
+        else
+        {
+            runtimeError("Operands must be numbers");
+            return false;
+        }
+        break;
+    }
+
+    case OP_LESS:
+    {
+        Value b = pop();
+        Value a = pop();
+
+        if (a.isInt() && b.isInt())
+        {
+            push(Value::makeBool(a.asInt() < b.asInt()));
+        }
+        else if (a.isDouble() && b.isDouble())
+        {
+            push(Value::makeBool(a.asDouble() < b.asDouble()));
+        }
+        else if (a.isInt() && b.isDouble())
+        {
+            push(Value::makeBool(a.asInt() < b.asDouble()));
+        }
+        else if (a.isDouble() && b.isInt())
+        {
+            push(Value::makeBool(a.asDouble() < b.asInt()));
+        }
+        else
+        {
+            runtimeError("Operands must be numbers");
+            return false;
+        }
+        break;
+    }
+
+    case OP_LESS_EQUAL:
+    {
+        Value b = pop();
+        Value a = pop();
+
+        if (a.isInt() && b.isInt())
+        {
+            push(Value::makeBool(a.asInt() <= b.asInt()));
+        }
+        else if (a.isDouble() && b.isDouble())
+        {
+            push(Value::makeBool(a.asDouble() <= b.asDouble()));
+        }
+        else if (a.isInt() && b.isDouble())
+        {
+            push(Value::makeBool(a.asInt() <= b.asDouble()));
+        }
+        else if (a.isDouble() && b.isInt())
+        {
+            push(Value::makeBool(a.asDouble() <= b.asInt()));
+        }
+        else
+        {
+            runtimeError("Operands must be numbers");
+            return false;
+        }
+        break;
+    }
+
+    case OP_PRINT:
+    {
+        printValue(pop());
+        printf("\n");
+        break;
+    }
+
+    case OP_GET_LOCAL:
+    {
+        uint8_t slot = READ_BYTE();
+        push(frame->slots[slot]);
+        break;
+    }
+
+    case OP_SET_LOCAL:
+    {
+        uint8_t slot = READ_BYTE();
+        frame->slots[slot] = peek(0);
+        break;
+    }
+
+    case OP_DEFINE_GLOBAL:
+    {
+        std::string name = READ_STRING();
+        Value value = pop();
+
+        if (globals_.count(name))
+        {
+            runtimeError("Variable '%s' already defined", name.c_str());
+            return false;
+        }
+
+        globals_[name] = value;
+        break;
+    }
+
+    case OP_GET_GLOBAL:
+    {
+        std::string name = READ_STRING();
+
+        auto it = globals_.find(name);
+        if (it == globals_.end())
+        {
+            runtimeError("Undefined variable '%s'", name.c_str());
+            return false;
+        }
+
+        push(it->second);
+        break;
+    }
+
+    case OP_SET_GLOBAL:
+    {
+        std::string name = READ_STRING();
+
+        if (!globals_.count(name))
+        {
+            runtimeError("Undefined variable '%s'", name.c_str());
+            return false;
+        }
+
+        globals_[name] = peek(0);
+        break;
+    }
+
+    case OP_JUMP:
+    {
+        uint16_t offset = READ_SHORT();
+        frame->ip += offset;
+        break;
+    }
+
+    case OP_JUMP_IF_FALSE:
+    {
+        uint16_t offset = READ_SHORT();
+        if (!isTruthy(peek(0)))
+        {
+            frame->ip += offset;
+        }
+        break;
+    }
+
+    case OP_LOOP:
+    {
+        uint16_t offset = READ_SHORT();
+        frame->ip -= offset;
+        break;
+    }
+
+    case OP_CALL_NATIVE:
+    {
+        std::string name = READ_STRING();
+        uint8_t argCount = READ_BYTE();
+
+        if (!callNative(name, argCount))
+        {
+            return false;
+        }
+        break;
+    }
+
+    case OP_CALL:
+    {
+        std::string name = READ_STRING();
+        uint8_t argCount = READ_BYTE();
+
+        auto it = functionNames_.find(name);
+        if (it == functionNames_.end())
+        {
+            runtimeError("Undefined function '%s'", name.c_str());
+            return false;
+        }
+
+        Function *function = functions_[it->second];
+
+        if (!callFunction(function, argCount))
+        {
+            return false;
+        }
+
+        // Atualiza frame pointer após call
+        frame = &frames_[frameCount_ - 1];
+        break;
+    }
+
+    case OP_RETURN:
+    {
+        Value result = pop();
+        frameCount_--;
+
+        if (frameCount_ == 0)
+        {
+            // Fim completo do script
+            stackTop_ = stack_;
+            push(result);
+        }
+        else
+        {
+            // Retornou de uma função, continua execução
+            stackTop_ = frame->slots;
+            push(result);
+            frame = &frames_[frameCount_ - 1];
+        }
+        break;
+    }
+
+    default:
+        runtimeError("Unknown opcode: %d", instruction);
+        return false;
+    }
+
+#undef READ_BYTE
+#undef READ_SHORT
+#undef READ_CONSTANT
+#undef READ_STRING
+
+    return true;
 }

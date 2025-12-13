@@ -85,9 +85,10 @@ public:
 private:
     Value stack_[STACK_MAX];
     Value *stackTop_;
-
+    
     CallFrame frames_[FRAMES_MAX];
     int frameCount_;
+    bool hasFatalError_;
 
     std::unordered_map<std::string, Value> globals_;
 
@@ -98,6 +99,7 @@ private:
 
     bool run();
     bool executeUntilReturn(int targetFrameCount) ;
+    bool executeInstruction(CallFrame*& frame);
 
     bool isTruthy(const Value &value);
 
