@@ -1,4 +1,5 @@
 #include "vm.h"
+#include "stringpool.h"
 #include <cstdio>
 #include <cstdarg>
 
@@ -8,12 +9,12 @@ CallFrame::CallFrame()
 VM::VM() : stackTop_(stack_), frameCount_(0), hasFatalError_(false)
 {
     natives_.registerBuiltins();
-   
 }
 
 VM::~VM()
 {
-    
+
+    StringPool::instance().clear();
     for (Function *func : functions_)
     {
         delete func;
@@ -22,20 +23,20 @@ VM::~VM()
 
 uint16_t VM::registerFunction(const std::string &name, Function *func)
 {
-    // Valida
     if (!func)
     {
         runtimeError("Cannot register null function");
         return 0;
     }
 
-    auto it = functionNames_.find(name);
+    // Intern name ONCE
+    const char *internedName = StringPool::instance().intern(name);
 
+    auto it = functionNames_.find(internedName);
     if (it != functionNames_.end())
     {
-
         fprintf(stderr, "Warning: Function '%s' already registered at index %d\n",
-                name.c_str(), it->second);
+                internedName, it->second);
         return it->second;
     }
 
@@ -47,7 +48,7 @@ uint16_t VM::registerFunction(const std::string &name, Function *func)
 
     uint16_t index = static_cast<uint16_t>(functions_.size());
     functions_.push_back(func);
-    functionNames_[name] = index;
+    functionNames_[internedName] = index;
 
     return index;
 }
@@ -80,31 +81,33 @@ void VM::resetStack()
     frameCount_ = 0;
 }
 
-void VM::registerNative(const std::string &name, int arity, NativeFunction fn)
+void VM::registerNative(const char *name, int arity, NativeFunction fn)
 {
-    if (natives_.hasFunction(name))
+    const char *internedName = StringPool::instance().intern(name);
+
+    if (natives_.hasFunction(internedName))
     {
-        runtimeError("Native function '%s' already registered", name.c_str());
+        runtimeError("Native function '%s' already registered", internedName);
         return;
     }
 
-    natives_.registerFunction(name, arity, fn);
+    natives_.registerFunction(internedName, arity, fn);
 }
 
-bool VM::callNative(const std::string &name, int argCount)
+bool VM::callNative(const char *name, int argCount)
 {
     NativeFn *native = natives_.getFunction(name);
 
     if (!native)
     {
-        runtimeError("Undefined native function '%s'", name.c_str());
+        runtimeError("Undefined native function '%s'", name);
         return false;
     }
 
     if (native->arity != -1 && argCount != native->arity)
     {
         runtimeError("%s() expects %d arguments but got %d",
-                     name.c_str(), native->arity, argCount);
+                     name, native->arity, argCount);
         return false;
     }
 
@@ -347,7 +350,7 @@ const char *VM::ToString(int index)
         runtimeError("Expected string at index %d", index);
         return "";
     }
-    return v.asString()->c_str();
+    return v.asString();
 }
 
 bool VM::ToBool(int index)
@@ -619,7 +622,7 @@ void VM::DumpStack()
             printf("double: %.2f\n", v.asDouble());
             break;
         case VAL_STRING:
-            printf("string: \"%s\"\n", v.asString()->c_str());
+            printf("string: \"%s\"\n", v.asString());
             break;
         case VAL_FUNCTION:
             printf("function: %d\n", v.asFunctionIdx());
@@ -642,7 +645,7 @@ void VM::DumpGlobals()
 
     for (const auto &[name, value] : globals_)
     {
-        printf("  %s = ", name.c_str());
+        printf("  %s = ", name);
         printValue(value);
         printf("\n");
     }
@@ -716,10 +719,9 @@ bool VM::executeInstruction(CallFrame *&frame)
         return false;
 
 #define READ_BYTE() (*frame->ip++)
-#define READ_SHORT() \
-    (frame->ip += 2, (uint16_t)((frame->ip[-2] << 8) | frame->ip[-1]))
+#define READ_SHORT() (frame->ip += 2, (uint16_t)((frame->ip[-2] << 8) | frame->ip[-1]))
 #define READ_CONSTANT() (frame->function->chunk.constants[READ_BYTE()])
-#define READ_STRING() (READ_CONSTANT().asString()->c_str())
+#define READ_STRING_PTR() (frame->function->chunk.getStringPtr(READ_BYTE()))
 
     uint8_t instruction = READ_BYTE();
 
@@ -756,7 +758,7 @@ bool VM::executeInstruction(CallFrame *&frame)
         // String concatenation
         if (a.isString() && b.isString())
         {
-            String result = *a.asString() + *b.asString();
+            const char *result = StringPool::instance().concat(a.asString(), b.asString());
             push(Value::makeString(result));
         }
         // Int + Int = Int
@@ -924,7 +926,7 @@ bool VM::executeInstruction(CallFrame *&frame)
         }
         else if (a.isString())
         {
-            push(Value::makeBool(*a.asString() == *b.asString()));
+            push(Value::makeBool(a.asString() == b.asString()));
         }
         else if (a.isDouble())
         {
@@ -956,7 +958,7 @@ bool VM::executeInstruction(CallFrame *&frame)
         }
         else if (a.isString())
         {
-            push(Value::makeBool(*a.asString() != *b.asString()));
+            push(Value::makeBool(a.asString() != b.asString()));
         }
         else if (a.isDouble())
         {
@@ -1108,12 +1110,13 @@ bool VM::executeInstruction(CallFrame *&frame)
 
     case OP_DEFINE_GLOBAL:
     {
-        std::string name = READ_STRING();
+        const char *name = READ_STRING_PTR();
         Value value = pop();
 
+        // Fast lookup using pointer hash
         if (globals_.count(name))
         {
-            runtimeError("Variable '%s' already defined", name.c_str());
+            runtimeError("Variable '%s' already defined", name);
             return false;
         }
 
@@ -1123,26 +1126,27 @@ bool VM::executeInstruction(CallFrame *&frame)
 
     case OP_GET_GLOBAL:
     {
-        std::string name = READ_STRING();
+        const char *name = READ_STRING_PTR();
+        Value value = pop();
 
-        auto it = globals_.find(name);
-        if (it == globals_.end())
+        // Fast lookup using pointer hash
+        if (globals_.count(name))
         {
-            runtimeError("Undefined variable '%s'", name.c_str());
+            runtimeError("Variable '%s' already defined", name);
             return false;
         }
 
-        push(it->second);
+        globals_[name] = value;
         break;
     }
 
     case OP_SET_GLOBAL:
     {
-        std::string name = READ_STRING();
+        const char *name = READ_STRING_PTR();
 
         if (!globals_.count(name))
         {
-            runtimeError("Undefined variable '%s'", name.c_str());
+            runtimeError("Undefined variable '%s'", name);
             return false;
         }
 
@@ -1176,25 +1180,27 @@ bool VM::executeInstruction(CallFrame *&frame)
 
     case OP_CALL_NATIVE:
     {
-        std::string name = READ_STRING();
+        const char *name = READ_STRING_PTR();
         uint8_t argCount = READ_BYTE();
 
         if (!callNative(name, argCount))
         {
             return false;
         }
+
         break;
     }
 
     case OP_CALL:
     {
-        std::string name = READ_STRING();
+        const char *name = READ_STRING_PTR();
         uint8_t argCount = READ_BYTE();
 
+        // Fast pointer-based lookup
         auto it = functionNames_.find(name);
         if (it == functionNames_.end())
         {
-            runtimeError("Undefined function '%s'", name.c_str());
+            runtimeError("Undefined function '%s'", name);
             return false;
         }
 
@@ -1240,6 +1246,7 @@ bool VM::executeInstruction(CallFrame *&frame)
 #undef READ_SHORT
 #undef READ_CONSTANT
 #undef READ_STRING
+#undef READ_STRING_PTR
 
     return true;
 }

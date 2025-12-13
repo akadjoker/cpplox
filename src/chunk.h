@@ -10,6 +10,8 @@ struct Chunk
     std::vector<Value> constants;
     std::vector<int> lines;
 
+    const char* getStringPtr(size_t index) const ;
+    
     void write(uint8_t byte, int line);
     int addConstant(Value value);
 

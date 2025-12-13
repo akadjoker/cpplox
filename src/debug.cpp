@@ -77,7 +77,7 @@ int Debug::disassembleInstruction(const Chunk &chunk, int offset)
         uint8_t argCount = chunk.code[offset + 2];
         printf("%-16s %4d '%s' (%d args)\n", "OP_CALL_NATIVE",
                nameIdx,
-               chunk.constants[nameIdx].asString()->c_str(),
+               chunk.constants[nameIdx].asString(),
                argCount);
         return offset + 3;
     }

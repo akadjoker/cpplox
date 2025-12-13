@@ -23,12 +23,12 @@ public:
     ~VM();
 
     InterpretResult interpret(Function *function);
-    void registerNative(const std::string &name, int arity, NativeFunction fn);
+    void registerNative(const char* name, int arity, NativeFunction fn);
 
     Value *getStackTop() { return stackTop_; }
     uint16_t registerFunction(const std::string &name, Function *func);
 
-    const std::unordered_map<std::string, Value> &getGlobals() const
+    const std::unordered_map<const char*, Value> &getGlobals() const
     {
         return globals_;
     }
@@ -90,10 +90,10 @@ private:
     int frameCount_;
     bool hasFatalError_;
 
-    std::unordered_map<std::string, Value> globals_;
+    std::unordered_map<const char*, Value> globals_;
 
     std::vector<Function *> functions_;
-    std::unordered_map<std::string, uint16_t> functionNames_;
+    std::unordered_map<const char*, uint16_t> functionNames_;
 
     NativeRegistry natives_;
 
@@ -107,7 +107,7 @@ private:
     Value pop();
     const Value& peek(int distance);
 
-    bool callNative(const std::string &name, int argCount);
+    bool callNative(const char* name, int argCount);
     bool callFunction(Function *function, int argCount);
 
     void runtimeError(const char *format, ...);
