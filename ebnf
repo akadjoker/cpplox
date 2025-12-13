@@ -1,0 +1,33 @@
+program        → declaration* EOF ;
+
+declaration    → varDecl | funDecl | statement ;
+
+varDecl        → "var" IDENTIFIER ( "=" expression )? ";" ;
+funDecl        → "def" IDENTIFIER "(" parameters? ")" block ;
+parameters     → IDENTIFIER ( "," IDENTIFIER )* ;
+
+statement      → exprStmt | ifStmt | whileStmt | forStmt 
+               | returnStmt | block ;
+
+exprStmt       → expression ";" ;
+ifStmt         → "if" "(" expression ")" block
+                 ( "elif" "(" expression ")" block )*
+                 ( "else" block )? ;
+whileStmt      → "while" "(" expression ")" block ;
+forStmt        → "for" "(" varDecl expression ";" expression ")" block ;
+returnStmt     → "return" expression? ";" ;
+block          → "{" declaration* "}" ;
+
+expression     → assignment ;
+assignment     → IDENTIFIER "=" assignment | logic_or ;
+logic_or       → logic_and ( "or" logic_and )* ;
+logic_and      → equality ( "and" equality )* ;
+equality       → comparison ( ( "==" | "!=" ) comparison )* ;
+comparison     → term ( ( "<" | "<=" | ">" | ">=" ) term )* ;
+term           → factor ( ( "+" | "-" ) factor )* ;
+factor         → unary ( ( "*" | "/" | "%" ) unary )* ;
+unary          → ( "not" | "-" ) unary | call ;
+call           → primary ( "(" arguments? ")" )* ;
+arguments      → expression ( "," expression )* ;
+primary        → NUMBER | STRING | "true" | "false" | "nil"
+               | IDENTIFIER | "(" expression ")" ;
