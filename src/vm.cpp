@@ -749,7 +749,12 @@ bool VM::executeInstruction(CallFrame *&frame)
     case OP_POP:
         pop();
         break;
-
+    case OP_NOT:
+    {
+        Value v = pop();
+        push(Value::makeBool(!isTruthy(v)));
+        break;
+    }
     case OP_ADD:
     {
         Value b = pop();
@@ -879,6 +884,21 @@ bool VM::executeInstruction(CallFrame *&frame)
         else
         {
             runtimeError("Operands must be numbers");
+            return false;
+        }
+        break;
+    }
+    case OP_MODULO:
+    {
+        Value b = pop();
+        Value a = pop();
+        if (a.isInt() && b.isInt())
+        {
+            push(Value::makeInt(a.asInt() % b.asInt()));
+        }
+        else
+        {
+            runtimeError("Operands must be integers");
             return false;
         }
         break;

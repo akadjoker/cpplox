@@ -9,9 +9,13 @@ class Lexer {
 public:
     explicit Lexer(const std::string& source);
     
-    Token nextToken();
-    std::vector<Token> scanTokens();
+ 
+    Token scanToken();
+    
+ 
+    std::vector<Token> scanAll();
     void printTokens(const std::vector<Token>& tokens) const;
+    
     void reset();
     
 private:
@@ -23,14 +27,9 @@ private:
     int column;
     int tokenColumn;
     
-    // ✅ NOVO: Flag de erro pendente
-    bool hasPendingError;
-    std::string pendingErrorMessage;
-    int pendingErrorLine;
-    int pendingErrorColumn;
-    
     std::unordered_map<std::string, TokenType> keywords;
     
+    // Helper methods
     bool isAtEnd() const;
     char advance();
     char peek() const;
@@ -39,17 +38,13 @@ private:
     
     void skipWhitespace();
     
-    Token scanToken();
     Token makeToken(TokenType type, const std::string& lexeme);
+    Token errorToken(const std::string& message);
     
+    // Token scanners
     Token number();
     Token string();
     Token identifier();
-    
-    Token errorToken(const std::string& message);
-    
- 
-    void setPendingError(const std::string& message);
     
     void initKeywords();
 };

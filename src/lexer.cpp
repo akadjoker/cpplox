@@ -8,11 +8,7 @@ Lexer::Lexer(const std::string &src)
       current(0),
       line(1),
       column(1),
-      tokenColumn(1),
-      hasPendingError(false),
-      pendingErrorMessage(""),
-      pendingErrorLine(0),
-      pendingErrorColumn(0)
+      tokenColumn(1)
 {
     initKeywords();
 }
@@ -45,8 +41,6 @@ void Lexer::reset()
     line = 1;
     column = 1;
     tokenColumn = 1;
-    hasPendingError = false;
-    pendingErrorMessage = "";
 }
 
 bool Lexer::isAtEnd() const
@@ -98,17 +92,6 @@ bool Lexer::match(char expected)
     return true;
 }
 
-void Lexer::setPendingError(const std::string &message)
-{
-    if (!hasPendingError)
-    {
-        hasPendingError = true;
-        pendingErrorMessage = message;
-        pendingErrorLine = line;
-        pendingErrorColumn = column;
-    }
-}
-
 void Lexer::skipWhitespace()
 {
     while (!isAtEnd())
@@ -120,9 +103,6 @@ void Lexer::skipWhitespace()
         case ' ':
         case '\r':
         case '\t':
-            advance();
-            break;
-
         case '\n':
             advance();
             break;
@@ -130,9 +110,7 @@ void Lexer::skipWhitespace()
         case '/':
             if (peekNext() == '/')
             {
-                // Comentário linha
-                advance();
-                advance();
+                // Line comment
                 while (peek() != '\n' && !isAtEnd())
                 {
                     advance();
@@ -140,51 +118,44 @@ void Lexer::skipWhitespace()
             }
             else if (peekNext() == '*')
             {
+                // Block comment
                 advance(); // /
                 advance(); // *
 
-                bool closed = false;
-                size_t commentStart = current;
-                const size_t MAX_COMMENT_LENGTH = 100000;
+                int nestLevel = 1;
 
-                while (!isAtEnd())
+                while (!isAtEnd() && nestLevel > 0)
                 {
-                    if (current - commentStart > MAX_COMMENT_LENGTH)
+                    if (peek() == '/' && peekNext() == '*')
                     {
-                        setPendingError("Comment too long (max 100k chars)");
-                        // ✅ Consome o resto do comentário inválido
-                        while (!isAtEnd() && !(peek() == '*' && peekNext() == '/'))
-                        {
-                            advance();
-                        }
-                        if (peek() == '*')
-                        {
-                            advance();
-                            advance();
-                        }
-                        return; // Sai para reportar erro
+                        advance();
+                        advance();
+                        nestLevel++;
                     }
-
-                    if (peek() == '*' && peekNext() == '/')
+                    else if (peek() == '*' && peekNext() == '/')
                     {
-                        advance(); // *
-                        advance(); // /
-                        closed = true;
-                        break;
+                        advance();
+                        advance();
+                        nestLevel--;
                     }
-
-                    advance();
+                    else
+                    {
+                        advance();
+                    }
                 }
 
-                if (!closed && isAtEnd())
+                // If we hit EOF with unclosed comment, that's an error
+                // but we'll handle it in scanToken() by returning TOKEN_ERROR
+                if (nestLevel > 0)
                 {
-                    setPendingError("Unterminated block comment");
-                    // Não há mais nada a fazer, já estamos no fim
+                    // Don't set pending error, just return
+                    // scanToken() will detect EOF
+                    return;
                 }
             }
             else
             {
-                return; // É operador /, não comentário
+                return; // It's the / operator
             }
             break;
 
@@ -206,8 +177,6 @@ Token Lexer::errorToken(const std::string &message)
 
 Token Lexer::number()
 {
-    size_t startPos = current - 1;
-
     while (isdigit(peek()))
     {
         advance();
@@ -218,7 +187,7 @@ Token Lexer::number()
     if (peek() == '.' && isdigit(peekNext()))
     {
         type = TOKEN_FLOAT;
-        advance();
+        advance(); // consume '.'
 
         while (isdigit(peek()))
         {
@@ -226,28 +195,22 @@ Token Lexer::number()
         }
     }
 
-    if (current <= startPos)
-    {
-        return errorToken("Number parsing error");
-    }
-
     std::string numStr = source.substr(start, current - start);
     return makeToken(type, numStr);
 }
 
+// lexer.cpp - Token Lexer::string()
 Token Lexer::string()
 {
-    const size_t MAX_STRING_LENGTH = 10000;
-    size_t startPos = current;
+    // fprintf(stderr, "DEBUG string(): start=%zu, current=%zu\n", start, current);
+    // fprintf(stderr, "DEBUG char at start: '%c'\n", source[start]);
+    // fprintf(stderr, "DEBUG char at current: '%c'\n", source[current]);
+
+    size_t stringStart = current;
 
     while (peek() != '"' && !isAtEnd())
     {
         advance();
-
-        if (current - startPos > MAX_STRING_LENGTH)
-        {
-            return errorToken("String too long (max 10000 chars)");
-        }
     }
 
     if (isAtEnd())
@@ -255,29 +218,25 @@ Token Lexer::string()
         return errorToken("Unterminated string");
     }
 
-    advance(); // fecha "
+  // fprintf(stderr, "DEBUG before capture: stringStart=%zu, current=%zu\n", stringStart, current);
+    std::string value = source.substr(stringStart, current - stringStart);
+    //fprintf(stderr, "DEBUG captured: '%s'\n", value.c_str());
 
-    std::string value = source.substr(start + 1, current - start - 2);
+    advance(); // Consome " final
+
     return makeToken(TOKEN_STRING, value);
 }
 
 Token Lexer::identifier()
 {
-    const size_t MAX_IDENTIFIER_LENGTH = 255;
-    size_t startPos = current - 1;
-
     while (isalnum(peek()) || peek() == '_')
     {
         advance();
-
-        if (current - startPos > MAX_IDENTIFIER_LENGTH)
-        {
-            return errorToken("Identifier too long (max 255 chars)");
-        }
     }
 
     std::string text = source.substr(start, current - start);
 
+    // Check if it's a keyword
     auto it = keywords.find(text);
     if (it != keywords.end())
     {
@@ -286,14 +245,36 @@ Token Lexer::identifier()
 
     return makeToken(TOKEN_IDENTIFIER, text);
 }
+
+// ============================================
+// MAIN API: scanToken()
+// ============================================
+
 Token Lexer::scanToken()
 {
+    skipWhitespace();
+
+    start = current;
+    tokenColumn = column;
+
     if (isAtEnd())
     {
         return makeToken(TOKEN_EOF, "");
     }
 
     char c = advance();
+
+    // Numbers
+    if (isdigit(c))
+    {
+        return number();
+    }
+
+    // Identifiers and keywords
+    if (isalpha(c) || c == '_')
+    {
+        return identifier();
+    }
 
     switch (c)
     {
@@ -321,108 +302,67 @@ Token Lexer::scanToken()
     case '/':
         return makeToken(TOKEN_SLASH, "/");
 
+    // Two-char tokens
     case '=':
-    {
-        bool isDouble = match('=');
-        return makeToken(
-            isDouble ? TOKEN_EQUAL_EQUAL : TOKEN_EQUAL,
-            isDouble ? "==" : "=");
-    }
+        if (match('=')) {
+            return makeToken(TOKEN_EQUAL_EQUAL, "==");
+        }
+        return makeToken(TOKEN_EQUAL, "=");
 
     case '!':
-    {
-        bool isDouble = match('=');
-        return makeToken(
-            isDouble ? TOKEN_BANG_EQUAL : TOKEN_BANG,
-            isDouble ? "!=" : "!");
-    }
+        if (match('=')) {
+            return makeToken(TOKEN_BANG_EQUAL, "!=");
+        }
+        return makeToken(TOKEN_BANG, "!");
 
     case '<':
-    {
-        bool isDouble = match('=');
-        return makeToken(
-            isDouble ? TOKEN_LESS_EQUAL : TOKEN_LESS,
-            isDouble ? "<=" : "<");
-    }
+        if (match('=')) {
+            return makeToken(TOKEN_LESS_EQUAL, "<=");
+        }
+        return makeToken(TOKEN_LESS, "<");
 
     case '>':
-    {
-        bool isDouble = match('=');
-        return makeToken(
-            isDouble ? TOKEN_GREATER_EQUAL : TOKEN_GREATER,
-            isDouble ? ">=" : ">");
-    }
+        if (match('=')) {
+            return makeToken(TOKEN_GREATER_EQUAL, ">=");
+        }
+        return makeToken(TOKEN_GREATER, ">");
 
     case '&':
-    {
         if (match('&'))
         {
             return makeToken(TOKEN_AND_AND, "&&");
         }
         return errorToken("Expected '&&' for logical AND");
-    }
 
     case '|':
-    {
         if (match('|'))
         {
             return makeToken(TOKEN_OR_OR, "||");
         }
         return errorToken("Expected '||' for logical OR");
-    }
 
-    // Literals
+    // String literals
     case '"':
         return string();
 
     default:
-        if (isdigit(c))
-        {
-            return number();
-        }
-        else if (isalpha(c) || c == '_')
-        {
-            return identifier();
-        }
-        return errorToken(std::string("Unexpected character: '") + c + "'");
+        return errorToken("Unexpected character");
     }
 }
 
-Token Lexer::nextToken()
-{
+// ============================================
+// BATCH API: For tools/debugging
+// ============================================
 
-    if (hasPendingError)
-    {
-        Token errorTok(TOKEN_ERROR, pendingErrorMessage,
-                       pendingErrorLine, pendingErrorColumn);
-        hasPendingError = false; // Limpa erro
-        return errorTok;
-    }
-
-    skipWhitespace();
-
-    if (hasPendingError)
-    {
-        Token errorTok(TOKEN_ERROR, pendingErrorMessage,
-                       pendingErrorLine, pendingErrorColumn);
-        hasPendingError = false;
-        return errorTok;
-    }
-
-    start = current;
-    tokenColumn = column;
-
-    return scanToken();
-}
-
-std::vector<Token> Lexer::scanTokens()
+std::vector<Token> Lexer::scanAll()
 {
     std::vector<Token> tokens;
+    tokens.reserve(256); // Pre-allocate for performance
 
     Token token;
     do
     {
-        token = nextToken();
+        token = scanToken();
         tokens.push_back(token);
 
     } while (token.type != TOKEN_EOF);

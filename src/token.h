@@ -32,6 +32,7 @@ enum TokenType
     TOKEN_STAR,
     TOKEN_SLASH,
     TOKEN_PERCENT,
+    
 
     // Operators - Comparison
     TOKEN_EQUAL,
@@ -61,7 +62,8 @@ enum TokenType
 
     // Special
     TOKEN_EOF,
-    TOKEN_ERROR
+    TOKEN_ERROR,
+    TOKEN_COUNT 
 };
 
 struct Token

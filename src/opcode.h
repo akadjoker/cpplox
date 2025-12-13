@@ -14,6 +14,7 @@ enum Opcode : uint8_t
 
     // Stack
     OP_POP,
+    OP_NOT,
 
     // Arithmetic
     OP_ADD,
@@ -21,6 +22,7 @@ enum Opcode : uint8_t
     OP_MULTIPLY,
     OP_DIVIDE,
     OP_NEGATE,
+    OP_MODULO,
 
     // Comparisons
     OP_EQUAL,
