@@ -110,6 +110,14 @@ Value Value::makeDouble(double d)
     return v;
 }
 
+Value Value::makeFloat(float f)
+{
+    Value v;
+    v.type = VAL_DOUBLE;
+    v.as.number = f;
+    return v;
+}
+
 Value Value::makeString(const char *str)
 {
     Value v;
@@ -137,6 +145,7 @@ Value Value::makeFunction(int idx)
 bool Value::asBool() const { return as.boolean; }
 int Value::asInt() const { return as.integer; }
 double Value::asDouble() const { return as.number; }
+float Value::asFloat() const { return (float)as.number; }
 String *Value::asString() const { return as.string; }
 int Value::asFunctionIdx() const { return as.functionIdx; }
 

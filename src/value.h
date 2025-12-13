@@ -37,8 +37,11 @@ struct Value
     // Factory methods
     static Value makeNull();
     static Value makeBool(bool b);
+    static Value makeTrue() { return makeBool(true); }
+    static Value makeFalse() { return makeBool(false); }
     static Value makeInt(int i);
     static Value makeDouble(double d);
+    static Value makeFloat(float f);
     static Value makeString(const char *str);
     static Value makeString(const String &str);
     static Value makeFunction(int idx);
@@ -55,6 +58,7 @@ struct Value
     bool asBool() const;
     int asInt() const;
     double asDouble() const;
+    float asFloat() const;
     String *asString() const;
     int asFunctionIdx() const;
 };

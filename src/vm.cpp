@@ -10,6 +10,68 @@ VM::VM() : stackTop_(stack_), frameCount_(0)
     natives_.registerBuiltins();
 }
 
+VM::~VM()
+{
+    for (Function *func : functions_)
+    {
+        delete func;
+    }
+}
+
+// vm.cpp
+
+uint16_t VM::registerFunction(const std::string &name, Function *func)
+{
+    if (!func)
+    {
+        runtimeError("Cannot register null function");
+        return 0;
+    }
+
+    if (functions_.size() >= 65535)
+    {
+        runtimeError("Too many functions (max 65535)");
+        return 0;
+    }
+
+    auto it = functionNames_.find(name);
+    if (it != functionNames_.end())
+    {
+        fprintf(stderr, "Warning: Function '%s' already exists, overwriting\n",
+                name.c_str());
+        uint16_t oldIdx = it->second;
+        delete functions_[oldIdx];
+        functions_[oldIdx] = func;
+        return oldIdx;
+    }
+
+    uint16_t index = static_cast<uint16_t>(functions_.size());
+    functions_.push_back(func);
+    functionNames_[name] = index;
+    return index;
+}
+
+Function *VM::getFunction(const char *name)
+{
+    auto it = functionNames_.find(name);
+    if (it != functionNames_.end())
+    {
+        return functions_[it->second];
+    }
+    runtimeError("Undefined function '%s'", name);
+    return nullptr;
+}
+
+Function *VM::getFunction(uint16_t index)
+{
+    if (index < functions_.size())
+    {
+        return functions_[index];
+    }
+    runtimeError("Function index out of range");
+    return nullptr;
+}
+
 void VM::resetStack()
 {
     stackTop_ = stack_;
@@ -18,6 +80,12 @@ void VM::resetStack()
 
 void VM::registerNative(const std::string &name, int arity, NativeFunction fn)
 {
+    if (natives_.hasFunction(name))
+    {
+        runtimeError("Native function '%s' already registered", name.c_str());
+        return;
+    }
+
     natives_.registerFunction(name, arity, fn);
 }
 
@@ -47,6 +115,32 @@ bool VM::callNative(const std::string &name, int argCount)
     return true;
 }
 
+bool VM::callFunction(Function *function, int argCount)
+{
+    // Verifica arity
+    if (argCount != function->arity)
+    {
+        runtimeError("Function '%s' expects %d arguments but got %d",
+                     function->name.c_str(), function->arity, argCount);
+        return false;
+    }
+
+    // Verifica overflow de frames
+    if (frameCount_ >= FRAMES_MAX)
+    {
+        runtimeError("Stack overflow - too many nested calls");
+        return false;
+    }
+
+    // Cria novo frame
+    CallFrame *frame = &frames_[frameCount_++];
+    frame->function = function;
+    frame->ip = function->chunk.code.data();
+    frame->slots = stackTop_ - argCount; // args já estão na stack
+
+    return true;
+}
+
 InterpretResult VM::interpret(Function *function)
 {
     push(Value::makeFunction(0));
@@ -57,6 +151,23 @@ InterpretResult VM::interpret(Function *function)
     frame->slots = stack_;
 
     return run() ? InterpretResult::OK : InterpretResult::RUNTIME_ERROR;
+}
+
+bool VM::isTruthy(const Value &value)
+{
+    switch (value.type)
+    {
+    case VAL_NULL:
+        return false;
+    case VAL_BOOL:
+        return value.asBool();
+    case VAL_INT:
+        return value.asInt() != 0;
+    case VAL_DOUBLE:
+        return value.asDouble() != 0.0;
+    default:
+        return true; // strings, functions são truthy
+    }
 }
 
 bool VM::run()
@@ -351,6 +462,49 @@ bool VM::run()
             frame->slots[slot] = peek(0);
             break;
         }
+        case OP_DEFINE_GLOBAL:
+        {
+            std::string name = READ_STRING();
+            Value value = pop();
+
+            if (globals_.count(name))
+            {
+                runtimeError("Variable '%s' already defined", name.c_str());
+                return false;
+            }
+
+            globals_[name] = value;
+            break;
+        }
+
+        case OP_GET_GLOBAL:
+        {
+            std::string name = READ_STRING();
+
+            auto it = globals_.find(name);
+            if (it == globals_.end())
+            {
+                runtimeError("Undefined variable '%s'", name.c_str());
+                return false;
+            }
+
+            push(it->second);
+            break;
+        }
+
+        case OP_SET_GLOBAL:
+        {
+            std::string name = READ_STRING();
+
+            if (!globals_.count(name))
+            {
+                runtimeError("Undefined variable '%s'", name.c_str());
+                return false;
+            }
+
+            globals_[name] = peek(0); // não faz pop!
+            break;
+        }
 
         case OP_JUMP:
         {
@@ -362,7 +516,7 @@ bool VM::run()
         case OP_JUMP_IF_FALSE:
         {
             uint16_t offset = READ_SHORT();
-            if (!peek(0).asBool())
+            if (!isTruthy(peek(0)))
             {
                 frame->ip += offset;
             }
@@ -385,6 +539,30 @@ bool VM::run()
             {
                 return false;
             }
+            break;
+        }
+        case OP_CALL:
+        {
+            std::string name = READ_STRING();
+            uint8_t argCount = READ_BYTE();
+
+            // Lookup função
+            auto it = functionNames_.find(name);
+            if (it == functionNames_.end())
+            {
+                runtimeError("Undefined function '%s'", name.c_str());
+                return false;
+            }
+
+            Function *function = functions_[it->second];
+
+            if (!callFunction(function, argCount))
+            {
+                return false;
+            }
+
+            // Atualiza frame pointer
+            frame = &frames_[frameCount_ - 1];
             break;
         }
 
