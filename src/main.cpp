@@ -1,1997 +1,1141 @@
 #include "chunk.h"
 #include "vm.h"
+#include "lexer.h"
 #include "debug.h"
 #include <cstdio>
-#include <ctime>
 #include <chrono>
+ 
 
+ 
+#include <iostream>
+#include <cassert>
+#include <chrono>
 
 using namespace std::chrono;
 
-void TestCalculator()
-{
-    printf("=== Calculator Example ===\n");
-    printf("Expression: (10 + 5) * 2 - 3\n");
-    printf("Expected: 27\n\n");
 
-    Function mainFunc("main");
-    Chunk &chunk = mainFunc.chunk;
 
-    // (10 + 5) * 2 - 3
-    int idx = chunk.addConstant(Value::makeInt(10));
-    chunk.write(OP_CONSTANT, 1);
-    chunk.write(idx, 1);
-
-    idx = chunk.addConstant(Value::makeInt(5));
-    chunk.write(OP_CONSTANT, 1);
-    chunk.write(idx, 1);
-
-    chunk.write(OP_ADD, 1);
-
-    idx = chunk.addConstant(Value::makeInt(2));
-    chunk.write(OP_CONSTANT, 1);
-    chunk.write(idx, 1);
-
-    chunk.write(OP_MULTIPLY, 1);
-
-    idx = chunk.addConstant(Value::makeInt(3));
-    chunk.write(OP_CONSTANT, 1);
-    chunk.write(idx, 1);
-
-    chunk.write(OP_SUBTRACT, 1);
-
-    // Print resultado
-    chunk.write(OP_PRINT, 1);
-
-    // Implicit return nil (1 byte em vez de 2!)
-    chunk.write(OP_NIL, 1);
-    chunk.write(OP_RETURN, 1);
-
-    // Debug
-    printf("=== Bytecode ===\n");
-    Debug::disassembleChunk(chunk, "main");
-    printf("\n");
-
-    // Execute
-    VM vm;
-    printf("=== Execution ===\n");
-    vm.interpret(&mainFunc);
-}
-
-int test_string()
-{
-    printf("=== String Test (SSO) ===\n\n");
-
-    Function mainFunc("main");
-    Chunk &chunk = mainFunc.chunk;
-
-    // Small string (SSO inline)
-    int idx1 = chunk.addConstant(Value::makeString("Hello"));
-    printf("String 1: \"%s\" - size: %zu, heap: %d\n",
-           chunk.constants[idx1].asString()->c_str(),
-           chunk.constants[idx1].asString()->size(),
-           chunk.constants[idx1].asString()->isHeap());
-
-    chunk.write(OP_CONSTANT, 1);
-    chunk.write(idx1, 1);
-
-    // Small string (SSO inline)
-    int idx2 = chunk.addConstant(Value::makeString(" World!"));
-    printf("String 2: \"%s\" - size: %zu, heap: %d\n",
-           chunk.constants[idx2].asString()->c_str(),
-           chunk.constants[idx2].asString()->size(),
-           chunk.constants[idx2].asString()->isHeap());
-
-    chunk.write(OP_CONSTANT, 1);
-    chunk.write(idx2, 1);
-
-    // Concatenate
-    chunk.write(OP_ADD, 1);
-    chunk.write(OP_PRINT, 1);
-
-    // Large string (heap allocated)
-    int idx3 = chunk.addConstant(Value::makeString(
-        "This is a very long string that exceeds SSO capacity!!!"));
-    printf("String 3: \"%s...\" - size: %zu, heap: %d\n\n",
-           "This is a very long string...",
-           chunk.constants[idx3].asString()->size(),
-           chunk.constants[idx3].asString()->isHeap());
-
-    chunk.write(OP_CONSTANT, 2);
-    chunk.write(idx3, 2);
-    chunk.write(OP_PRINT, 2);
-
-    chunk.write(OP_NIL, 3);
-    chunk.write(OP_RETURN, 3);
-
-    // Bytecode
-    printf("=== Bytecode ===\n");
-    Debug::disassembleChunk(chunk, "main");
-    printf("\n");
-
-    // Execute
-    VM vm;
-    printf("=== Execution ===\n");
-    vm.interpret(&mainFunc);
-
-    return 0;
-}
-
-int test_natives()
-{
-
-    printf("=== Manual Native Test ===\n\n");
-
-    VM vm;
-
-    // Registra função custom: dobro(x) = x * 2
-    vm.registerNative("dobro", 1, [](VM *vm, int argc, Value *args)
-                      {
-        if (args[0].isInt()) {
-            return Value::makeInt(args[0].asInt() * 2);
-        }
-        return Value::makeNull(); });
-
-    // Registra função custom: soma3(a, b, c) = a + b + c
-    vm.registerNative("soma3", 3, [](VM *vm, int argc, Value *args)
-                      {
-        int result = args[0].asInt() + args[1].asInt() + args[2].asInt();
-        return Value::makeInt(result); });
-
-    Function mainFunc("main");
-    Chunk &chunk = mainFunc.chunk;
-
-    int line = 1;
-
-    // Testa: dobro(21)
-    printf("dobro(21) = ?\n");
-    int valIdx = chunk.addConstant(Value::makeInt(21));
-    chunk.write(OP_CONSTANT, line);
-    chunk.write(valIdx, line);
-
-    int nameIdx = chunk.addConstant(Value::makeString("dobro"));
-    chunk.write(OP_CALL_NATIVE, line);
-    chunk.write(nameIdx, line);
-    chunk.write(1, line); // 1 arg
-    chunk.write(OP_PRINT, line);
-
-    // Testa: soma3(10, 20, 30)
-    printf("soma3(10, 20, 30) = ?\n");
-    valIdx = chunk.addConstant(Value::makeInt(10));
-    chunk.write(OP_CONSTANT, line);
-    chunk.write(valIdx, line);
-
-    valIdx = chunk.addConstant(Value::makeInt(20));
-    chunk.write(OP_CONSTANT, line);
-    chunk.write(valIdx, line);
-
-    valIdx = chunk.addConstant(Value::makeInt(30));
-    chunk.write(OP_CONSTANT, line);
-    chunk.write(valIdx, line);
-
-    nameIdx = chunk.addConstant(Value::makeString("soma3"));
-    chunk.write(OP_CALL_NATIVE, line);
-    chunk.write(nameIdx, line);
-    chunk.write(3, line); // 3 args
-    chunk.write(OP_PRINT, line);
-
-    // Testa: abs(-42)
-    printf("abs(-42) = ?\n");
-    valIdx = chunk.addConstant(Value::makeInt(-42));
-    chunk.write(OP_CONSTANT, line);
-    chunk.write(valIdx, line);
-
-    nameIdx = chunk.addConstant(Value::makeString("abs"));
-    chunk.write(OP_CALL_NATIVE, line);
-    chunk.write(nameIdx, line);
-    chunk.write(1, line);
-    chunk.write(OP_PRINT, line);
-
-    // Testa: sqrt(144)
-    printf("sqrt(144) = ?\n");
-    valIdx = chunk.addConstant(Value::makeInt(144));
-    chunk.write(OP_CONSTANT, line);
-    chunk.write(valIdx, line);
-
-    nameIdx = chunk.addConstant(Value::makeString("sqrt"));
-    chunk.write(OP_CALL_NATIVE, line);
-    chunk.write(nameIdx, line);
-    chunk.write(1, line);
-    chunk.write(OP_PRINT, line);
-
-    chunk.write(OP_NIL, line);
-    chunk.write(OP_RETURN, line);
-
-    printf("\n=== Results ===\n");
-    vm.interpret(&mainFunc);
-
-    return 0;
-}
-
-int test_global_variables()
-{
-    printf("=== Global Variables Test ===\n\n");
-
-    Function mainFunc("main");
-    Chunk &chunk = mainFunc.chunk;
-
-    int line = 1;
-
-    // var x = 10;
-    printf("1. var x = 10\n");
-    int valIdx = chunk.addConstant(Value::makeInt(10));
-    chunk.write(OP_CONSTANT, line);
-    chunk.write(valIdx, line);
-
-    int nameIdx = chunk.addConstant(Value::makeString("x"));
-    chunk.write(OP_DEFINE_GLOBAL, line);
-    chunk.write(nameIdx, line);
-
-    // var y = 20;
-    printf("2. var y = 20\n");
-    valIdx = chunk.addConstant(Value::makeInt(20));
-    chunk.write(OP_CONSTANT, line);
-    chunk.write(valIdx, line);
-
-    nameIdx = chunk.addConstant(Value::makeString("y"));
-    chunk.write(OP_DEFINE_GLOBAL, line);
-    chunk.write(nameIdx, line);
-
-    // print(x);
-    printf("3. print(x)\n");
-    nameIdx = chunk.addConstant(Value::makeString("x"));
-    chunk.write(OP_GET_GLOBAL, line);
-    chunk.write(nameIdx, line);
-    chunk.write(OP_PRINT, line);
-
-    // print(y);
-    printf("4. print(y)\n");
-    nameIdx = chunk.addConstant(Value::makeString("y"));
-    chunk.write(OP_GET_GLOBAL, line);
-    chunk.write(nameIdx, line);
-    chunk.write(OP_PRINT, line);
-
-    // x = 30;
-    printf("5. x = 30\n");
-    valIdx = chunk.addConstant(Value::makeInt(30));
-    chunk.write(OP_CONSTANT, line);
-    chunk.write(valIdx, line);
-
-    nameIdx = chunk.addConstant(Value::makeString("x"));
-    chunk.write(OP_SET_GLOBAL, line);
-    chunk.write(nameIdx, line);
-    chunk.write(OP_POP, line); // descarta valor da expressão
-
-    // print(x);
-    printf("6. print(x) - deve ser 30\n");
-    nameIdx = chunk.addConstant(Value::makeString("x"));
-    chunk.write(OP_GET_GLOBAL, line);
-    chunk.write(nameIdx, line);
-    chunk.write(OP_PRINT, line);
-
-    // var z;  (sem inicializar)
-    printf("7. var z; (nil automático)\n");
-    chunk.write(OP_NIL, line);
-    nameIdx = chunk.addConstant(Value::makeString("z"));
-    chunk.write(OP_DEFINE_GLOBAL, line);
-    chunk.write(nameIdx, line);
-
-    // print(z);
-    printf("8. print(z) - deve ser null\n");
-    nameIdx = chunk.addConstant(Value::makeString("z"));
-    chunk.write(OP_GET_GLOBAL, line);
-    chunk.write(nameIdx, line);
-    chunk.write(OP_PRINT, line);
-
-    chunk.write(OP_NIL, line);
-    chunk.write(OP_RETURN, line);
-
-    // Disassemble
-    printf("\n=== Bytecode ===\n");
-    Debug::disassembleChunk(chunk, "main");
-    printf("\n");
-
-    // Execute
-    VM vm;
-    printf("=== Execution ===\n");
-    vm.interpret(&mainFunc);
-
-    return 0;
-}
-
-void testRedefinition()
-{
-    printf("=== Test 1: Redefinition Error ===\n");
-
-    Function mainFunc("main");
-    Chunk &chunk = mainFunc.chunk;
-
-    // var x = 10;
-    int valIdx = chunk.addConstant(Value::makeInt(10));
-    chunk.write(OP_CONSTANT, 1);
-    chunk.write(valIdx, 1);
-
-    int nameIdx = chunk.addConstant(Value::makeString("x"));
-    chunk.write(OP_DEFINE_GLOBAL, 1);
-    chunk.write(nameIdx, 1);
-
-    // var x = 20;  // ERRO!
-    valIdx = chunk.addConstant(Value::makeInt(20));
-    chunk.write(OP_CONSTANT, 2);
-    chunk.write(valIdx, 2);
-
-    nameIdx = chunk.addConstant(Value::makeString("x"));
-    chunk.write(OP_DEFINE_GLOBAL, 2);
-    chunk.write(nameIdx, 2);
-
-    chunk.write(OP_NIL, 3);
-    chunk.write(OP_RETURN, 3);
-
-    VM vm;
-    vm.interpret(&mainFunc);
-    printf("\n");
-}
-
-void testUndefined()
-{
-    printf("=== Test 2: Undefined Variable Error ===\n");
-
-    Function mainFunc("main");
-    Chunk &chunk = mainFunc.chunk;
-
-    // print(nao_existe);  // ERRO!
-    int nameIdx = chunk.addConstant(Value::makeString("nao_existe"));
-    chunk.write(OP_GET_GLOBAL, 1);
-    chunk.write(nameIdx, 1);
-    chunk.write(OP_PRINT, 1);
-
-    chunk.write(OP_NIL, 2);
-    chunk.write(OP_RETURN, 2);
-
-    VM vm;
-    vm.interpret(&mainFunc);
-    printf("\n");
-}
-
-void testAssignUndefined()
-{
-    printf("=== Test 3: Assign to Undefined Error ===\n");
-
-    Function mainFunc("main");
-    Chunk &chunk = mainFunc.chunk;
-
-    // y = 100;  // ERRO! y não foi definida
-    int valIdx = chunk.addConstant(Value::makeInt(100));
-    chunk.write(OP_CONSTANT, 1);
-    chunk.write(valIdx, 1);
-
-    int nameIdx = chunk.addConstant(Value::makeString("y"));
-    chunk.write(OP_SET_GLOBAL, 1);
-    chunk.write(nameIdx, 1);
-
-    chunk.write(OP_NIL, 2);
-    chunk.write(OP_RETURN, 2);
-
-    VM vm;
-    vm.interpret(&mainFunc);
-    printf("\n");
-}
-
-int loopWithGlobals()
-{
-    printf("=== Loop with Globals Test ===\n\n");
-    printf("Code:\n");
-    printf("var counter = 0;\n");
-    printf("while (counter < 5) {\n");
-    printf("    print(counter);\n");
-    printf("    counter = counter + 1;\n");
-    printf("}\n\n");
-
-    Function mainFunc("main");
-    Chunk &chunk = mainFunc.chunk;
-
-    int line = 1;
-
-    // var counter = 0;
-    int valIdx = chunk.addConstant(Value::makeInt(0));
-    chunk.write(OP_CONSTANT, line);
-    chunk.write(valIdx, line);
-
-    int nameIdx = chunk.addConstant(Value::makeString("counter"));
-    chunk.write(OP_DEFINE_GLOBAL, line);
-    chunk.write(nameIdx, line);
-
-    // LOOP START
-    int loopStart = chunk.count();
-
-    // while (counter < 5)
-    nameIdx = chunk.addConstant(Value::makeString("counter"));
-    chunk.write(OP_GET_GLOBAL, line);
-    chunk.write(nameIdx, line);
-
-    valIdx = chunk.addConstant(Value::makeInt(5));
-    chunk.write(OP_CONSTANT, line);
-    chunk.write(valIdx, line);
-
-    chunk.write(OP_LESS, line);
-
-    // if false, jump to end
-    chunk.write(OP_JUMP_IF_FALSE, line);
-    int exitJump = chunk.count();
-    chunk.write(0, line); // placeholder
-    chunk.write(0, line);
-    chunk.write(OP_POP, line); // pop condition
-
-    // print(counter);
-    nameIdx = chunk.addConstant(Value::makeString("counter"));
-    chunk.write(OP_GET_GLOBAL, line);
-    chunk.write(nameIdx, line);
-    chunk.write(OP_PRINT, line);
-
-    // counter = counter + 1;
-    nameIdx = chunk.addConstant(Value::makeString("counter"));
-    chunk.write(OP_GET_GLOBAL, line);
-    chunk.write(nameIdx, line);
-
-    valIdx = chunk.addConstant(Value::makeInt(1));
-    chunk.write(OP_CONSTANT, line);
-    chunk.write(valIdx, line);
-
-    chunk.write(OP_ADD, line);
-
-    nameIdx = chunk.addConstant(Value::makeString("counter"));
-    chunk.write(OP_SET_GLOBAL, line);
-    chunk.write(nameIdx, line);
-    chunk.write(OP_POP, line); // descarta resultado
-
-    // Loop back
-    chunk.write(OP_LOOP, line);
-    int loopOffset = chunk.count() - loopStart + 2;
-    chunk.write((loopOffset >> 8) & 0xff, line);
-    chunk.write(loopOffset & 0xff, line);
-
-    // EXIT (patch jump)
-    int exitOffset = chunk.count() - exitJump - 2;
-    chunk.code[exitJump] = (exitOffset >> 8) & 0xff;
-    chunk.code[exitJump + 1] = exitOffset & 0xff;
-
-    chunk.write(OP_POP, line); // pop condition
-
-    chunk.write(OP_NIL, line);
-    chunk.write(OP_RETURN, line);
-
-    // Execute
-    VM vm;
-    printf("=== Execution ===\n");
-    vm.interpret(&mainFunc);
-
-    return 0;
-}
-
-int teste_functions()
-{
-    printf("=== Function Call Test ===\n\n");
-
-    VM vm;
-
-    // ===== FUNÇÃO: add(a, b) =====
-    Function *addFunc = new Function("add", 2); // arity = 2
-    Chunk &addChunk = addFunc->chunk;
-
-    // return a + b;
-    addChunk.write(OP_GET_LOCAL, 1);
-    addChunk.write(0, 1); // slot 0 = a
-
-    addChunk.write(OP_GET_LOCAL, 1);
-    addChunk.write(1, 1); // slot 1 = b
-
-    addChunk.write(OP_ADD, 1);
-    addChunk.write(OP_RETURN, 1);
-
-    // Registra função
-    vm.registerFunction("add", addFunc);
-
-    printf("Registered function: add(a, b)\n");
-
-    // ===== FUNÇÃO MAIN =====
-    Function mainFunc("main");
-    Chunk &mainChunk = mainFunc.chunk;
-
-    // print(add(10, 5));
-    printf("Code: print(add(10, 5))\n\n");
-
-    int valIdx = mainChunk.addConstant(Value::makeInt(10));
-    mainChunk.write(OP_CONSTANT, 1);
-    mainChunk.write(valIdx, 1);
-
-    valIdx = mainChunk.addConstant(Value::makeInt(5));
-    mainChunk.write(OP_CONSTANT, 1);
-    mainChunk.write(valIdx, 1);
-
-    int nameIdx = mainChunk.addConstant(Value::makeString("add"));
-    mainChunk.write(OP_CALL, 1);
-    mainChunk.write(nameIdx, 1);
-    mainChunk.write(2, 1); // 2 args
-
-    mainChunk.write(OP_PRINT, 1);
-
-    // print(add(100, 200));
-    printf("Code: print(add(100, 200))\n\n");
-
-    valIdx = mainChunk.addConstant(Value::makeInt(100));
-    mainChunk.write(OP_CONSTANT, 2);
-    mainChunk.write(valIdx, 2);
-
-    valIdx = mainChunk.addConstant(Value::makeInt(200));
-    mainChunk.write(OP_CONSTANT, 2);
-    mainChunk.write(valIdx, 2);
-
-    nameIdx = mainChunk.addConstant(Value::makeString("add"));
-    mainChunk.write(OP_CALL, 2);
-    mainChunk.write(nameIdx, 2);
-    mainChunk.write(2, 2);
-
-    mainChunk.write(OP_PRINT, 2);
-
-    mainChunk.write(OP_NIL, 3);
-    mainChunk.write(OP_RETURN, 3);
-
-    // Execute
-    printf("=== Execution ===\n");
-    vm.interpret(&mainFunc);
-
-    return 0;
-}
-
-int teste_fib()
-{
-    printf("=== Fibonacci Recursivo ===\n\n");
-    printf("fn fib(n) {\n");
-    printf("    if (n < 2) return n;\n");
-    printf("    return fib(n-1) + fib(n-2);\n");
-    printf("}\n\n");
-
-    VM vm;
-
-    // ===== FUNÇÃO: fib(n) =====
-    Function *fibFunc = new Function("fib", 1); // arity = 1
-    Chunk &fibChunk = fibFunc->chunk;
-
-    int line = 1;
-
-    // if (n < 2)
-    fibChunk.write(OP_GET_LOCAL, line);
-    fibChunk.write(0, line); // slot 0 = n
-
-    int constIdx = fibChunk.addConstant(Value::makeInt(2));
-    fibChunk.write(OP_CONSTANT, line);
-    fibChunk.write(constIdx, line);
-
-    fibChunk.write(OP_LESS, line); // n < 2
-
-    fibChunk.write(OP_JUMP_IF_FALSE, line);
-    int elseJump = fibChunk.count();
-    fibChunk.write(0, line); // placeholder
-    fibChunk.write(0, line);
-    fibChunk.write(OP_POP, line); // pop condition
-
-    // THEN: return n;
-    fibChunk.write(OP_GET_LOCAL, line);
-    fibChunk.write(0, line); // return n
-    fibChunk.write(OP_RETURN, line);
-
-    // ELSE: patch jump
-    int elseOffset = fibChunk.count() - elseJump - 2;
-    fibChunk.code[elseJump] = (elseOffset >> 8) & 0xff;
-    fibChunk.code[elseJump + 1] = elseOffset & 0xff;
-    fibChunk.write(OP_POP, line); // pop condition
-
-    // return fib(n-1) + fib(n-2);
-
-    // fib(n-1)
-    fibChunk.write(OP_GET_LOCAL, line);
-    fibChunk.write(0, line); // n
-
-    constIdx = fibChunk.addConstant(Value::makeInt(1));
-    fibChunk.write(OP_CONSTANT, line);
-    fibChunk.write(constIdx, line);
-
-    fibChunk.write(OP_SUBTRACT, line); // n - 1
-
-    int nameIdx = fibChunk.addConstant(Value::makeString("fib"));
-    fibChunk.write(OP_CALL, line);
-    fibChunk.write(nameIdx, line);
-    fibChunk.write(1, line); // 1 arg
-
-    // fib(n-2)
-    fibChunk.write(OP_GET_LOCAL, line);
-    fibChunk.write(0, line); // n
-
-    constIdx = fibChunk.addConstant(Value::makeInt(2));
-    fibChunk.write(OP_CONSTANT, line);
-    fibChunk.write(constIdx, line);
-
-    fibChunk.write(OP_SUBTRACT, line); // n - 2
-
-    nameIdx = fibChunk.addConstant(Value::makeString("fib"));
-    fibChunk.write(OP_CALL, line);
-    fibChunk.write(nameIdx, line);
-    fibChunk.write(1, line); // 1 arg
-
-    // fib(n-1) + fib(n-2)
-    fibChunk.write(OP_ADD, line);
-    fibChunk.write(OP_RETURN, line);
-
-    // Registra função
-    vm.registerFunction("fib", fibFunc);
-
-    // ===== MAIN =====
-    Function mainFunc("main");
-    Chunk &mainChunk = mainFunc.chunk;
-
-    // Testa vários valores
-    for (int n = 0; n <= 20; n++)
-    {
-        printf("Calculando fib(%d)...\n", n);
-
-        constIdx = mainChunk.addConstant(Value::makeInt(n));
-        mainChunk.write(OP_CONSTANT, 1);
-        mainChunk.write(constIdx, 1);
-
-        nameIdx = mainChunk.addConstant(Value::makeString("fib"));
-        mainChunk.write(OP_CALL, 1);
-        mainChunk.write(nameIdx, 1);
-        mainChunk.write(1, 1);
-
-        mainChunk.write(OP_PRINT, 1);
-    }
-
-    mainChunk.write(OP_NIL, 1);
-    mainChunk.write(OP_RETURN, 1);
-
-    // Debug
-    printf("\n=== Bytecode da função fib ===\n");
-    Debug::disassembleChunk(fibChunk, "fib");
-
-    // Execute
-    printf("\n=== Execution ===\n");
-    vm.interpret(&mainFunc);
-
-    return 0;
-}
-
-int test_api()
-{
-    VM vm;
-
-    // Push values
-    vm.PushInt(10);
-    vm.PushString("hello");
-    vm.PushDouble(3.14);
-
-    // Lua-style indexing
-    printf("Base: %d\n", vm.ToInt(0));      // 10
-    printf("Top: %.2f\n", vm.ToDouble(-1)); // 3.14
-
-    // Type check
-    if (vm.IsString(1))
-    {
-        printf("String: %s\n", vm.ToString(1)); // hello
-    }
-
-    // Stack info
-    printf("Size: %d\n", vm.GetTop()); // 3
-
-    // Debug
-    vm.DumpStack();
-
-    return 0;
-}
-
-int test_pcall()
-{
-    printf("=== Testing GetGlobal() and Call() ===\n\n");
-
-    VM vm;
-
-    // ===== 1. CRIAR FUNÇÃO: add(a, b) =====
-    Function *addFunc = new Function("add", 2);
-    Chunk &chunk = addFunc->chunk;
-
-    // return a + b;
-    chunk.write(OP_GET_LOCAL, 1);
-    chunk.write(0, 1); // a
-
-    chunk.write(OP_GET_LOCAL, 1);
-    chunk.write(1, 1); // b
-
-    chunk.write(OP_ADD, 1);
-    chunk.write(OP_RETURN, 1);
-
-    // Registra função
-    uint16_t addIdx = vm.registerFunction("add", addFunc);
-    printf("Registered 'add' with index: %d\n\n", addIdx);
-
-    // ===== 2. CRIAR GLOBAL COM FUNÇÃO =====
-    vm.Push(Value::makeFunction(addIdx));
-    vm.SetGlobal("add");
-    printf("Set global 'add'\n\n");
-
-    // ===== 3. TESTAR GetGlobal() =====
-    printf("Test 1: GetGlobal\n");
-    vm.GetGlobal("add");
-
-    if (vm.IsFunction(-1))
-    {
-        printf("✅ GetGlobal('add') returned function\n");
-        vm.Pop();
-    }
-    else
-    {
-        printf("❌ GetGlobal('add') failed\n");
-        return 1;
-    }
-
-    // ===== 4. TESTAR Call() =====
-    printf("\nTest 2: Call add(10, 20)\n");
-
-    vm.GetGlobal("add"); // push função
-    vm.PushInt(10);      // arg1
-    vm.PushInt(20);      // arg2
-
-    printf("Stack before Call: size=%d\n", vm.GetTop());
-    vm.DumpStack();
-
-    vm.Call(2, 1); // 2 args, 1 result
-
-    printf("\nStack after Call: size=%d\n", vm.GetTop());
-    vm.DumpStack();
-
-    if (vm.IsInt(-1))
-    {
-        int result = vm.ToInt(-1);
-        printf("\n✅ Result: %d\n", result);
-
-        if (result == 30)
-        {
-            printf("✅ CORRECT! 10 + 20 = 30\n");
-        }
-        else
-        {
-            printf("❌ WRONG! Expected 30, got %d\n", result);
-        }
-        vm.Pop();
-    }
-    else
-    {
-        printf("❌ Call failed\n");
-        return 1;
-    }
-
-    // ===== 5. TESTAR Call SEM RESULTADO =====
-    printf("\n\nTest 3: Call add(5, 3) with no result\n");
-
-    vm.GetGlobal("add");
-    vm.PushInt(5);
-    vm.PushInt(3);
-
-    vm.Call(2, 0); // 0 results - descarta
-
-    printf("Stack size after Call(2,0): %d\n", vm.GetTop());
-    if (vm.GetTop() == 0)
-    {
-        printf("✅ Result discarded correctly\n");
-    }
-
-    // ===== 6. TESTAR FUNÇÃO RECURSIVA =====
-    printf("\n\nTest 4: Recursive function - fib(5)\n");
-
-    Function *fibFunc = new Function("fib", 1);
-    Chunk &fibChunk = fibFunc->chunk;
-
-    // if (n < 2) return n;
-    fibChunk.write(OP_GET_LOCAL, 1);
-    fibChunk.write(0, 1);
-
-    int idx = fibChunk.addConstant(Value::makeInt(2));
-    fibChunk.write(OP_CONSTANT, 1);
-    fibChunk.write(idx, 1);
-
-    fibChunk.write(OP_LESS, 1);
-    fibChunk.write(OP_JUMP_IF_FALSE, 1);
-    int elseJump = fibChunk.count();
-    fibChunk.write(0, 1);
-    fibChunk.write(0, 1);
-    fibChunk.write(OP_POP, 1);
-
-    fibChunk.write(OP_GET_LOCAL, 1);
-    fibChunk.write(0, 1);
-    fibChunk.write(OP_RETURN, 1);
-
-    int offset = fibChunk.count() - elseJump - 2;
-    fibChunk.code[elseJump] = (offset >> 8) & 0xff;
-    fibChunk.code[elseJump + 1] = offset & 0xff;
-    fibChunk.write(OP_POP, 1);
-
-    // return fib(n-1) + fib(n-2);
-    fibChunk.write(OP_GET_LOCAL, 1);
-    fibChunk.write(0, 1);
-    idx = fibChunk.addConstant(Value::makeInt(1));
-    fibChunk.write(OP_CONSTANT, 1);
-    fibChunk.write(idx, 1);
-    fibChunk.write(OP_SUBTRACT, 1);
-
-    idx = fibChunk.addConstant(Value::makeString("fib"));
-    fibChunk.write(OP_CALL, 1);
-    fibChunk.write(idx, 1);
-    fibChunk.write(1, 1);
-
-    fibChunk.write(OP_GET_LOCAL, 1);
-    fibChunk.write(0, 1);
-    idx = fibChunk.addConstant(Value::makeInt(2));
-    fibChunk.write(OP_CONSTANT, 1);
-    fibChunk.write(idx, 1);
-    fibChunk.write(OP_SUBTRACT, 1);
-
-    idx = fibChunk.addConstant(Value::makeString("fib"));
-    fibChunk.write(OP_CALL, 1);
-    fibChunk.write(idx, 1);
-    fibChunk.write(1, 1);
-
-    fibChunk.write(OP_ADD, 1);
-    fibChunk.write(OP_RETURN, 1);
-
-    uint16_t fibIdx = vm.registerFunction("fib", fibFunc);
-    vm.Push(Value::makeFunction(fibIdx));
-    vm.SetGlobal("fib");
-
-    // Call fib(5)
-    vm.GetGlobal("fib");
-    vm.PushInt(5);
-    vm.Call(1, 1);
-
-    int fibResult = vm.ToInt(-1);
-    printf("fib(5) = %d\n", fibResult);
-
-    if (fibResult == 5)
-    {
-        printf("✅ CORRECT! fib(5) = 5\n");
-    }
-    else
-    {
-        printf("❌ WRONG! Expected 5, got %d\n", fibResult);
-    }
-
-    printf("\n\n=== ALL TESTS COMPLETE ===\n");
-
-    return 0;
-}
-
-// int main()
-// {
-//     TestCalculator();
-//     test_string();
-//     test_natives();
-
-//     test_global_variables();
-
-//     testRedefinition();
-//     testUndefined();
-//     testAssignUndefined();
-
-//     loopWithGlobals();
-//     teste_functions();
-
-//     teste_fib();
-
-//     test_api();
-
-//     test_pcall();
-
-//     return 0;
-// }
-
-
-
+ 
 // ============================================
-// TEST 1: Stack Overflow
+// Helpers
 // ============================================
+int countType(const std::vector<Token>& tokens, TokenType type) {
+    int count = 0;
+    for (const auto& t : tokens) {
+        if (t.type == type) count++;
+    }
+    return count;
+}
 
-// void testStackOverflow() {
-//     printf("\n=== TEST 1: Stack Overflow ===\n");
-    
-//     VM vm;
-    
-//     // Empilha 1000 valores
-//     printf("Pushing 1000 values...\n");
-//     for (int i = 0; i < 1000; i++) {
-//         vm.PushInt(i);
-//     }
-    
-//     printf("Stack size: %d\n", vm.GetTop());
-    
-//     if (vm.GetTop() == 256) {
-//         printf("⚠️  Stack saturated at 256 (expected)\n");
-//     } else if (vm.GetTop() == 1000) {
-//         printf("❌ BUFFER OVERFLOW! Stack should be 256 max!\n");
-//     }
-// }
+int countErrors(const std::vector<Token>& tokens) {
+    return countType(tokens, TOKEN_ERROR);
+}
 
-// // ============================================
-// // TEST 2: Stack Underflow
-// // ============================================
+void printTokens(const std::vector<Token>& tokens) {
+    for (const auto& t : tokens) {
+        std::cout << "  " << t.toString() << "\n";
+    }
+}
 
-// void testStackUnderflow() {
-//     printf("\n=== TEST 2: Stack Underflow ===\n");
-    
-//     VM vm;
-    
-//     printf("Popping from empty stack...\n");
-//     Value v = vm.Pop();  // deve dar erro!
-    
-//     if (v.isNull()) {
-//         printf("✅ Returned null on underflow\n");
-//     } else {
-//         printf("❌ Should return null or error!\n");
-//     }
-    
-//     // Pop 100x
-//     printf("Popping 100 times from empty...\n");
-//     for (int i = 0; i < 100; i++) {
-//         vm.Pop();
-//     }
-    
-//     printf("✅ Survived 100 underflows\n");
-// }
+bool hasToken(const std::vector<Token>& tokens, TokenType type, const std::string& lexeme) {
+    for (const auto& t : tokens) {
+        if (t.type == type && t.lexeme == lexeme) return true;
+    }
+    return false;
+}
+
 
 // // ============================================
-// // TEST 3: Recursão Extrema
+// // Helper para contar erros
 // // ============================================
-
-// void testDeepRecursion() {
-//     printf("\n=== TEST 3: Deep Recursion (fib) ===\n");
-    
-//     VM vm;
-    
-//     // Função fib (como antes)
-//     Function* fibFunc = new Function("fib", 1);
-//     Chunk& chunk = fibFunc->chunk;
-    
-//     // if (n < 2) return n;
-//     chunk.write(OP_GET_LOCAL, 1);
-//     chunk.write(0, 1);
-//     int idx = chunk.addConstant(Value::makeInt(2));
-//     chunk.write(OP_CONSTANT, 1);
-//     chunk.write(idx, 1);
-//     chunk.write(OP_LESS, 1);
-//     chunk.write(OP_JUMP_IF_FALSE, 1);
-//     int elseJump = chunk.count();
-//     chunk.write(0, 1);
-//     chunk.write(0, 1);
-//     chunk.write(OP_POP, 1);
-//     chunk.write(OP_GET_LOCAL, 1);
-//     chunk.write(0, 1);
-//     chunk.write(OP_RETURN, 1);
-    
-//     int offset = chunk.count() - elseJump - 2;
-//     chunk.code[elseJump] = (offset >> 8) & 0xff;
-//     chunk.code[elseJump + 1] = offset & 0xff;
-//     chunk.write(OP_POP, 1);
-    
-//     // return fib(n-1) + fib(n-2);
-//     chunk.write(OP_GET_LOCAL, 1);
-//     chunk.write(0, 1);
-//     idx = chunk.addConstant(Value::makeInt(1));
-//     chunk.write(OP_CONSTANT, 1);
-//     chunk.write(idx, 1);
-//     chunk.write(OP_SUBTRACT, 1);
-//     idx = chunk.addConstant(Value::makeString("fib"));
-//     chunk.write(OP_CALL, 1);
-//     chunk.write(idx, 1);
-//     chunk.write(1, 1);
-    
-//     chunk.write(OP_GET_LOCAL, 1);
-//     chunk.write(0, 1);
-//     idx = chunk.addConstant(Value::makeInt(2));
-//     chunk.write(OP_CONSTANT, 1);
-//     chunk.write(idx, 1);
-//     chunk.write(OP_SUBTRACT, 1);
-//     idx = chunk.addConstant(Value::makeString("fib"));
-//     chunk.write(OP_CALL, 1);
-//     chunk.write(idx, 1);
-//     chunk.write(1, 1);
-    
-//     chunk.write(OP_ADD, 1);
-//     chunk.write(OP_RETURN, 1);
-    
-//     uint16_t fibIdx = vm.registerFunction("fib", fibFunc);
-//     vm.Push(Value::makeFunction(fibIdx));
-//     vm.SetGlobal("fib");
-    
-//     // Testa valores crescentes
-//     int tests[] = {5, 10, 15, 20, 25, 30};
-    
-//     for (int i = 0; i < 6; i++) {
-//         int n = tests[i];
-//         printf("Testing fib(%d)...", n);
-        
-//         clock_t start = clock();
-        
-//         vm.GetGlobal("fib");
-//         vm.PushInt(n);
-//         vm.Call(1, 1);
-        
-//         clock_t end = clock();
-//         double time = ((double)(end - start)) / CLOCKS_PER_SEC * 1000.0;
-        
-//         int result = vm.ToInt(-1);
-//         vm.Pop();
-        
-//         printf(" = %d (%.2f ms)\n", result, time);
-        
-//         if (time > 1000.0) {
-//             printf("⚠️  Took > 1 second! Stopping.\n");
-//             break;
+// int countErrors(const std::vector<Token>& tokens) {
+//     int errors = 0;
+//     for (const auto& token : tokens) {
+//         if (token.type == TOKEN_ERROR) {
+//             errors++;
 //         }
 //     }
+//     return errors;
 // }
 
-// // ============================================
-// // TEST 4: Call Stack Overflow
-// // ============================================
-
-// void testCallStackOverflow() {
-//     printf("\n=== TEST 4: Call Stack Overflow ===\n");
-    
-//     VM vm;
-    
-//     // Função recursiva infinita: boom() { boom(); }
-//     Function* boomFunc = new Function("boom", 0);
-//     Chunk& chunk = boomFunc->chunk;
-    
-//     int idx = chunk.addConstant(Value::makeString("boom"));
-//     chunk.write(OP_CALL, 1);
-//     chunk.write(idx, 1);
-//     chunk.write(0, 1);  // 0 args
-    
-//     chunk.write(OP_NIL, 1);
-//     chunk.write(OP_RETURN, 1);
-    
-//     uint16_t boomIdx = vm.registerFunction("boom", boomFunc);
-//     vm.Push(Value::makeFunction(boomIdx));
-//     vm.SetGlobal("boom");
-    
-//     printf("Calling infinite recursion boom()...\n");
-    
-//     vm.GetGlobal("boom");
-//     vm.Call(0, 0);  // Deve dar stack overflow!
-    
-//     printf("✅ Survived (should have errored)\n");
-// }
-
-// // ============================================
-// // TEST 5: Type Confusion
-// // ============================================
-
-// void testTypeErrors() {
-//     printf("\n=== TEST 5: Type Errors ===\n");
-    
-//     VM vm;
-    
-//     // String + Int?
-//     printf("Test: string + int...\n");
-//     vm.PushString("hello");
-//     vm.PushInt(42);
-//     // Como fazer ADD sem bytecode? Precisa de função helper
-    
-//     // Int como função?
-//     printf("Test: call int as function...\n");
-//     vm.PushInt(123);
-//     vm.Call(0, 0);  // Deve dar erro!
-    
-//     // ToInt de string?
-//     printf("Test: ToInt of string...\n");
-//     vm.PushString("not a number");
-//     int n = vm.ToInt(-1);  // Deve dar erro!
-//     printf("Got: %d\n", n);
-// }
-
-// // ============================================
-// // TEST 6: Memory Stress
-// // ============================================
-
-// void testMemoryStress() {
-//     printf("\n=== TEST 6: Memory Stress (Strings) ===\n");
-    
-//     VM vm;
-    
-//     printf("Creating 10000 strings...\n");
-    
-//     for (int i = 0; i < 10000; i++) {
-//         char buf[64];
-//         snprintf(buf, 64, "string_number_%d", i);
-        
-//         vm.PushString(buf);
-//         vm.SetGlobal(buf);  // Guarda global
-        
-//         if (i % 1000 == 0) {
-//             printf("  %d strings created...\n", i);
+// int countType(const std::vector<Token>& tokens, TokenType type) {
+//     int count = 0;
+//     for (const auto& token : tokens) {
+//         if (token.type == type) {
+//             count++;
 //         }
 //     }
-    
-//     printf("✅ Created 10000 strings\n");
-//     printf("⚠️  Memory leak? Check with valgrind!\n");
-    
-//     // Limpa
-//     printf("Clearing stack...\n");
-//     while (vm.GetTop() > 0) {
-//         vm.Pop();
-//     }
+//     return count;
 // }
 
-// // ============================================
-// // TEST 7: Invalid Indices
-// // ============================================
-
-// void testInvalidIndices() {
-//     printf("\n=== TEST 7: Invalid Stack Indices ===\n");
-    
-//     VM vm;
-    
-//     vm.PushInt(10);
-//     vm.PushInt(20);
-    
-//     printf("Stack size: %d\n", vm.GetTop());
-    
-//     // Acesso inválido
-//     printf("Test: Peek(999)...\n");
-//     const Value& v1 = vm.Peek(999);
-//     printf("Result type: %s\n", vm.TypeName(v1.type));
-    
-//     printf("Test: Peek(-999)...\n");
-//     const Value& v2 = vm.Peek(-999);
-//     printf("Result type: %s\n", vm.TypeName(v2.type));
-    
-//     printf("Test: ToInt(50)...\n");
-//     int n = vm.ToInt(50);
-//     printf("Result: %d\n", n);
-// }
-
-// // ============================================
-// // TEST 8: Global Overwrite
-// // ============================================
-
-// void testGlobalOverwrite() {
-//     printf("\n=== TEST 8: Global Overwrite ===\n");
-    
-//     VM vm;
-    
-//     // Set global várias vezes
-//     for (int i = 0; i < 100; i++) {
-//         vm.PushInt(i);
-//         vm.SetGlobal("x");
-//     }
-    
-//     vm.GetGlobal("x");
-//     int result = vm.ToInt(-1);
-//     vm.Pop();
-    
-//     printf("Final value of x: %d\n", result);
-    
-//     if (result == 99) {
-//         printf("✅ Correctly overwrote\n");
-//     } else {
-//         printf("❌ Expected 99, got %d\n", result);
-//     }
-    
-//     printf("⚠️  99 strings leaked? Need GC!\n");
-// }
-
-// // ============================================
-// // TEST 9: Nested Calls
-// // ============================================
-
-// void testNestedCalls() {
-//     printf("\n=== TEST 9: Nested Calls ===\n");
-    
-//     VM vm;
-    
-//     // a() calls b() calls c()
-//     Function* cFunc = new Function("c", 0);
-//     cFunc->chunk.write(OP_CONSTANT, 1);
-//     cFunc->chunk.write(cFunc->chunk.addConstant(Value::makeInt(42)), 1);
-//     cFunc->chunk.write(OP_RETURN, 1);
-    
-//     Function* bFunc = new Function("b", 0);
-//     int idx = bFunc->chunk.addConstant(Value::makeString("c"));
-//     bFunc->chunk.write(OP_CALL, 1);
-//     bFunc->chunk.write(idx, 1);
-//     bFunc->chunk.write(0, 1);
-//     bFunc->chunk.write(OP_RETURN, 1);
-    
-//     Function* aFunc = new Function("a", 0);
-//     idx = aFunc->chunk.addConstant(Value::makeString("b"));
-//     aFunc->chunk.write(OP_CALL, 1);
-//     aFunc->chunk.write(idx, 1);
-//     aFunc->chunk.write(0, 1);
-//     aFunc->chunk.write(OP_RETURN, 1);
-    
-//     vm.registerFunction("c", cFunc);
-//     vm.registerFunction("b", bFunc);
-//     vm.registerFunction("a", aFunc);
-    
-//     vm.Push(Value::makeFunction(vm.registerFunction("a", aFunc)));
-//     vm.SetGlobal("a");
-//     vm.Push(Value::makeFunction(vm.registerFunction("b", bFunc)));
-//     vm.SetGlobal("b");
-//     vm.Push(Value::makeFunction(vm.registerFunction("c", cFunc)));
-//     vm.SetGlobal("c");
-    
-//     printf("Calling a() -> b() -> c()...\n");
-    
-//     vm.GetGlobal("a");
-//     vm.Call(0, 1);
-    
-//     int result = vm.ToInt(-1);
-//     printf("Result: %d\n", result);
-    
-//     if (result == 42) {
-//         printf("✅ Nested calls work!\n");
-//     }
-// }
-
-// // ============================================
-// // TEST 10: Concurrent-like Stress
-// // ============================================
-
-// void testRapidFireCalls() {
-//     printf("\n=== TEST 10: Rapid Fire Calls ===\n");
-    
-//     VM vm;
-    
-//     // Simple add function
-//     Function* addFunc = new Function("add", 2);
-//     addFunc->chunk.write(OP_GET_LOCAL, 1);
-//     addFunc->chunk.write(0, 1);
-//     addFunc->chunk.write(OP_GET_LOCAL, 1);
-//     addFunc->chunk.write(1, 1);
-//     addFunc->chunk.write(OP_ADD, 1);
-//     addFunc->chunk.write(OP_RETURN, 1);
-    
-//     uint16_t addIdx = vm.registerFunction("add", addFunc);
-//     vm.Push(Value::makeFunction(addIdx));
-//     vm.SetGlobal("add");
-    
-//     printf("Calling add() 10000 times...\n");
-    
-//     clock_t start = clock();
-    
-//     for (int i = 0; i < 10000; i++) {
-//         vm.GetGlobal("add");
-//         vm.PushInt(i);
-//         vm.PushInt(i + 1);
-//         vm.Call(2, 1);
-//         vm.Pop();  // descarta resultado
-//     }
-    
-//     clock_t end = clock();
-//     double time = ((double)(end - start)) / CLOCKS_PER_SEC * 1000.0;
-    
-//     printf("✅ 10000 calls in %.2f ms\n", time);
-//     printf("   %.2f calls/ms\n", 10000.0 / time);
-// }
-
-// ============================================
-// MAIN - Roda Todos
-// ============================================
-
-// int main() {
-//     printf("╔════════════════════════════════════╗\n");
-//     printf("║   VM STRESS TESTS - REBENTA ISTO  ║\n");
-//     printf("╚════════════════════════════════════╝\n");
-    
-//     testStackOverflow();
-//     testStackUnderflow();
-//     testDeepRecursion();
-//     testCallStackOverflow();
-//     testTypeErrors();
-//     testMemoryStress();
-//     testInvalidIndices();
-//     testGlobalOverwrite();
-//     testNestedCalls();
-//     testRapidFireCalls();
-    
-//     printf("\n╔════════════════════════════════════╗\n");
-//     printf("║       STRESS TESTS COMPLETE        ║\n");
-//     printf("╚════════════════════════════════════╝\n");
-//     printf("\nRun with valgrind to check leaks:\n");
-//     printf("  valgrind --leak-check=full ./bin/stress_tests\n");
-    
-//     return 0;
-// }
-
-
-
-// ============================================
-// TEST 1: Stack Overflow
-// ============================================
-
-void testStackOverflow() {
-    printf("\n=== TEST 1: Stack Overflow ===\n");
-    
-    VM vm;
-    
-    // Empilha 1000 valores
-    printf("Pushing 1000 values...\n");
-    for (int i = 0; i < 1000; i++) {
-        vm.PushInt(i);
-    }
-    
-    printf("Stack size: %d\n", vm.GetTop());
-    
-    if (vm.GetTop() == 256) {
-        printf("⚠️  Stack saturated at 256 (expected)\n");
-    } else if (vm.GetTop() == 1000) {
-        printf("❌ BUFFER OVERFLOW! Stack should be 256 max!\n");
-    }
-}
-
-// ============================================
-// TEST 2: Stack Underflow
-// ============================================
-
-void testStackUnderflow() {
-    printf("\n=== TEST 2: Stack Underflow ===\n");
-    
-    VM vm;
-    
-    printf("Popping from empty stack...\n");
-    Value v = vm.Pop();  // deve dar erro!
-    
-    if (v.isNull()) {
-        printf("✅ Returned null on underflow\n");
-    } else {
-        printf("❌ Should return null or error!\n");
-    }
-    
-    // Pop 100x
-    printf("Popping 100 times from empty...\n");
-    for (int i = 0; i < 100; i++) {
-        vm.Pop();
-    }
-    
-    printf("✅ Survived 100 underflows\n");
-}
-
-// ============================================
-// TEST 3: Recursão Extrema
-// ============================================
-
-void testDeepRecursion() {
-    printf("\n=== TEST 3: Deep Recursion (fib) ===\n");
-    
-    VM vm;
-    
-    // Função fib (como antes)
-    Function* fibFunc = new Function("fib", 1);
-    Chunk& chunk = fibFunc->chunk;
-    
-    // if (n < 2) return n;
-    chunk.write(OP_GET_LOCAL, 1);
-    chunk.write(0, 1);
-    int idx = chunk.addConstant(Value::makeInt(2));
-    chunk.write(OP_CONSTANT, 1);
-    chunk.write(idx, 1);
-    chunk.write(OP_LESS, 1);
-    chunk.write(OP_JUMP_IF_FALSE, 1);
-    int elseJump = chunk.count();
-    chunk.write(0, 1);
-    chunk.write(0, 1);
-    chunk.write(OP_POP, 1);
-    chunk.write(OP_GET_LOCAL, 1);
-    chunk.write(0, 1);
-    chunk.write(OP_RETURN, 1);
-    
-    int offset = chunk.count() - elseJump - 2;
-    chunk.code[elseJump] = (offset >> 8) & 0xff;
-    chunk.code[elseJump + 1] = offset & 0xff;
-    chunk.write(OP_POP, 1);
-    
-    // return fib(n-1) + fib(n-2);
-    chunk.write(OP_GET_LOCAL, 1);
-    chunk.write(0, 1);
-    idx = chunk.addConstant(Value::makeInt(1));
-    chunk.write(OP_CONSTANT, 1);
-    chunk.write(idx, 1);
-    chunk.write(OP_SUBTRACT, 1);
-    idx = chunk.addConstant(Value::makeString("fib"));
-    chunk.write(OP_CALL, 1);
-    chunk.write(idx, 1);
-    chunk.write(1, 1);
-    
-    chunk.write(OP_GET_LOCAL, 1);
-    chunk.write(0, 1);
-    idx = chunk.addConstant(Value::makeInt(2));
-    chunk.write(OP_CONSTANT, 1);
-    chunk.write(idx, 1);
-    chunk.write(OP_SUBTRACT, 1);
-    idx = chunk.addConstant(Value::makeString("fib"));
-    chunk.write(OP_CALL, 1);
-    chunk.write(idx, 1);
-    chunk.write(1, 1);
-    
-    chunk.write(OP_ADD, 1);
-    chunk.write(OP_RETURN, 1);
-    
-    uint16_t fibIdx = vm.registerFunction("fib", fibFunc);
-    vm.Push(Value::makeFunction(fibIdx));
-    vm.SetGlobal("fib");
-    
-    // Testa valores crescentes
-    int tests[] = {5, 10, 15, 20, 25, 30};
-    
-    for (int i = 0; i < 6; i++) {
-        int n = tests[i];
-        printf("Testing fib(%d)...", n);
-        
-        clock_t start = clock();
-        
-        vm.GetGlobal("fib");
-        vm.PushInt(n);
-        vm.Call(1, 1);
-        
-        clock_t end = clock();
-        double time = ((double)(end - start)) / CLOCKS_PER_SEC * 1000.0;
-        
-        int result = vm.ToInt(-1);
-        vm.Pop();
-        
-        printf(" = %d (%.2f ms)\n", result, time);
-        
-        if (time > 1000.0) {
-            printf("⚠️  Took > 1 second! Stopping.\n");
-            break;
+void printErrors(const std::vector<Token>& tokens) {
+    for (const auto& token : tokens) {
+        if (token.type == TOKEN_ERROR) {
+            std::cerr << "  ❌ " << token.locationString() 
+                      << ": " << token.lexeme << std::endl;
         }
     }
 }
 
 // ============================================
-// TEST 4: Call Stack Overflow
+// TEST 1: Comentários Maliciosos
 // ============================================
-
-void testCallStackOverflow() {
-    printf("\n=== TEST 4: Call Stack Overflow ===\n");
+void testCommentsEvil() {
+    std::cout << "\n╔════════════════════════════════════════════════╗\n";
+    std::cout << "║  TEST 1: Comentários Maliciosos               ║\n";
+    std::cout << "╚════════════════════════════════════════════════╝\n";
     
-    VM vm;
+    // 1.1: Comentário não fechado
+    {
+        std::string src = "/* nunca fecha\nvar x = 10;";
+        Lexer lexer(src);
+        auto tokens = lexer.scanTokens();
+        assert(countErrors(tokens) >= 1);
+        std::cout << "✅ Comentário não fechado detectado\n";
+    }
     
-    // Função recursiva infinita: boom() { boom(); }
-    Function* boomFunc = new Function("boom", 0);
-    Chunk& chunk = boomFunc->chunk;
+    // 1.2: Comentário gigante (quase no limite)
+    {
+        std::string src = "/* " + std::string(99990, 'x') + " */";
+        Lexer lexer(src);
+        auto tokens = lexer.scanTokens();
+        assert(countErrors(tokens) == 0);
+        std::cout << "✅ Comentário gigante (99k) OK\n";
+    }
     
-    int idx = chunk.addConstant(Value::makeString("boom"));
-    chunk.write(OP_CALL, 1);
-    chunk.write(idx, 1);
-    chunk.write(0, 1);  // 0 args
+    // 1.3: Comentário MUITO gigante (acima do limite)
+    {
+        std::string src = "/* " + std::string(100001, 'x') + " */";
+        Lexer lexer(src);
+        auto tokens = lexer.scanTokens();
+        assert(countErrors(tokens) >= 1);
+        std::cout << "✅ Comentário muito gigante rejeitado\n";
+    }
     
-    chunk.write(OP_NIL, 1);
-    chunk.write(OP_RETURN, 1);
+    // 1.4: Múltiplos */ no código
+    {
+        std::string src = "var x = 10; */ var y = 20; */";
+        Lexer lexer(src);
+        auto tokens = lexer.scanTokens();
+        // */ é erro (não há comentário aberto)
+        assert(countType(tokens, TOKEN_IDENTIFIER) >= 2);
+        std::cout << "✅ */ solto tratado\n";
+    }
     
-    uint16_t boomIdx = vm.registerFunction("boom", boomFunc);
-    vm.Push(Value::makeFunction(boomIdx));
-    vm.SetGlobal("boom");
+    // 1.5: Comentário com newlines
+    {
+        std::string src = "/*\n\n\n\n\n*/var x = 10;";
+        Lexer lexer(src);
+        auto tokens = lexer.scanTokens();
+        assert(countType(tokens, TOKEN_VAR) == 1);
+        std::cout << "✅ Comentário multi-linha OK\n";
+    }
     
-    printf("Calling infinite recursion boom()...\n");
+    // 1.6: // no meio de /* */
+    {
+        std::string src = "/* teste // ainda comentário */var x = 10;";
+        Lexer lexer(src);
+        auto tokens = lexer.scanTokens();
+        assert(countType(tokens, TOKEN_VAR) == 1);
+        std::cout << "✅ // dentro de /* */ ignorado\n";
+    }
     
-    vm.GetGlobal("boom");
-    vm.Call(0, 0);  // Deve dar stack overflow!
-    
-    printf("✅ Survived (should have errored)\n");
+    // 1.7: /* no meio de // 
+    {
+        std::string src = "// teste /* não abre bloco\nvar x = 10;";
+        Lexer lexer(src);
+        auto tokens = lexer.scanTokens();
+        assert(countType(tokens, TOKEN_VAR) == 1);
+        std::cout << "✅ /* dentro de // ignorado\n";
+    }
 }
 
 // ============================================
-// TEST 5: Type Confusion
+// TEST 2: Strings Maliciosas
 // ============================================
-
-void testTypeErrors() {
-    printf("\n=== TEST 5: Type Errors ===\n");
+void testStringsEvil() {
+    std::cout << "\n╔════════════════════════════════════════════════╗\n";
+    std::cout << "║  TEST 2: Strings Maliciosas                   ║\n";
+    std::cout << "╚════════════════════════════════════════════════╝\n";
     
-    VM vm;
+    // 2.1: String não fechada
+    {
+        std::string src = "\"nunca fecha";
+        Lexer lexer(src);
+        auto tokens = lexer.scanTokens();
+        assert(countErrors(tokens) >= 1);
+        std::cout << "✅ String não fechada detectada\n";
+    }
     
-    // String + Int?
-    printf("Test: string + int...\n");
-    vm.PushString("hello");
-    vm.PushInt(42);
-    // Como fazer ADD sem bytecode? Precisa de função helper
+    // 2.2: String gigante (limite)
+    {
+        std::string src = "\"" + std::string(9998, 'x') + "\"";
+        Lexer lexer(src);
+        auto tokens = lexer.scanTokens();
+        assert(countErrors(tokens) == 0);
+        std::cout << "✅ String gigante (9998) OK\n";
+    }
     
-    // Int como função?
-    printf("Test: call int as function...\n");
-    vm.PushInt(123);
-    vm.Call(0, 0);  // Deve dar erro!
+    // 2.3: String MUITO gigante
+    {
+        std::string src = "\"" + std::string(10001, 'x') + "\"";
+        Lexer lexer(src);
+        auto tokens = lexer.scanTokens();
+        assert(countErrors(tokens) >= 1);
+        std::cout << "✅ String muito gigante rejeitada\n";
+    }
     
-    // ToInt de string?
-    printf("Test: ToInt of string...\n");
-    vm.PushString("not a number");
-    int n = vm.ToInt(-1);  // Deve dar erro!
-    printf("Got: %d\n", n);
+    // 2.4: String vazia
+    {
+        std::string src = "\"\"";
+        Lexer lexer(src);
+        auto tokens = lexer.scanTokens();
+        assert(countType(tokens, TOKEN_STRING) == 1);
+        std::cout << "✅ String vazia OK\n";
+    }
+    
+    // 2.5: String com newlines
+    {
+        std::string src = "\"linha1\nlinha2\nlinha3\"";
+        Lexer lexer(src);
+        auto tokens = lexer.scanTokens();
+        assert(countType(tokens, TOKEN_STRING) == 1);
+        std::cout << "✅ String multi-linha OK\n";
+    }
+    
+    // 2.6: Múltiplas strings
+    {
+        std::string src = "\"a\"\"b\"\"c\"";
+        Lexer lexer(src);
+        auto tokens = lexer.scanTokens();
+        assert(countType(tokens, TOKEN_STRING) == 3);
+        std::cout << "✅ Múltiplas strings consecutivas OK\n";
+    }
 }
 
 // ============================================
-// TEST 6: Memory Stress
+// TEST 3: Números Extremos
 // ============================================
+void testNumbersEvil() {
+    std::cout << "\n╔════════════════════════════════════════════════╗\n";
+    std::cout << "║  TEST 3: Números Extremos                     ║\n";
+    std::cout << "╚════════════════════════════════════════════════╝\n";
+    
+    // 3.1: Int máximo
+    {
+        std::string src = "2147483647";  // INT32_MAX
+        Lexer lexer(src);
+        auto tokens = lexer.scanTokens();
+        assert(countType(tokens, TOKEN_INT) == 1);
+        std::cout << "✅ INT32_MAX OK\n";
+    }
+    
+    // 3.2: Float gigante
+    {
+        std::string src = "3.40282e38";  // ~FLOAT_MAX
+        Lexer lexer(src);
+        auto tokens = lexer.scanTokens();
+        assert(countType(tokens, TOKEN_FLOAT) == 1);
+        std::cout << "✅ Float gigante OK\n";
+    }
+    
+    // 3.3: Número com múltiplos pontos (erro)
+    {
+        std::string src = "3.14.15";
+        Lexer lexer(src);
+        auto tokens = lexer.scanTokens();
+        // Deve ser: 3.14 (float) + . (erro ou operador?) + 15 (int)
+        // Ou tratado como erro
+        std::cout << "✅ Múltiplos pontos tratado\n";
+    }
+    
+    // 3.4: Número começando com ponto (erro)
+    {
+        std::string src = ".123";
+        Lexer lexer(src);
+        auto tokens = lexer.scanTokens();
+        // Não é número válido em nossa sintaxe
+        std::cout << "✅ .123 tratado\n";
+    }
+    
+    // 3.5: Números consecutivos
+    {
+        std::string src = "123 456 789";
+        Lexer lexer(src);
+        auto tokens = lexer.scanTokens();
+        assert(countType(tokens, TOKEN_INT) == 3);
+        std::cout << "✅ Números consecutivos OK\n";
+    }
+    
+    // 3.6: Zero
+    {
+        std::string src = "0 0.0";
+        Lexer lexer(src);
+        auto tokens = lexer.scanTokens();
+        assert(countType(tokens, TOKEN_INT) == 1);
+        assert(countType(tokens, TOKEN_FLOAT) == 1);
+        std::cout << "✅ Zeros OK\n";
+    }
+}
 
-void testMemoryStress() {
-    printf("\n=== TEST 6: Memory Stress (Strings) ===\n");
+// ============================================
+// TEST 4: Identificadores Extremos
+// ============================================
+void testIdentifiersEvil() {
+    std::cout << "\n╔════════════════════════════════════════════════╗\n";
+    std::cout << "║  TEST 4: Identificadores Extremos            ║\n";
+    std::cout << "╚════════════════════════════════════════════════╝\n";
     
-    VM vm;
+    // 4.1: Identificador longo (limite)
+    {
+        std::string src = std::string(254, 'x');
+        Lexer lexer(src);
+        auto tokens = lexer.scanTokens();
+        assert(countType(tokens, TOKEN_IDENTIFIER) == 1);
+        std::cout << "✅ Identificador 254 chars OK\n";
+    }
     
-    printf("Creating 10000 strings...\n");
+    // 4.2: Identificador MUITO longo
+    {
+        std::string src = std::string(256, 'x');
+        Lexer lexer(src);
+        auto tokens = lexer.scanTokens();
+        assert(countErrors(tokens) >= 1);
+        std::cout << "✅ Identificador muito longo rejeitado\n";
+    }
     
+    // 4.3: Identificador com underscore
+    {
+        std::string src = "_test __test__ _123";
+        Lexer lexer(src);
+        auto tokens = lexer.scanTokens();
+        assert(countType(tokens, TOKEN_IDENTIFIER) == 3);
+        std::cout << "✅ Underscores OK\n";
+    }
+    
+    // 4.4: Keywords não são identificadores
+    {
+        std::string src = "var if else while for";
+        Lexer lexer(src);
+        auto tokens = lexer.scanTokens();
+        assert(countType(tokens, TOKEN_IDENTIFIER) == 0);
+        assert(countType(tokens, TOKEN_VAR) == 1);
+        assert(countType(tokens, TOKEN_IF) == 1);
+        std::cout << "✅ Keywords detectadas\n";
+    }
+    
+    // 4.5: Identificador parecido com keyword
+    {
+        std::string src = "variable ifx elsex whileloop";
+        Lexer lexer(src);
+        auto tokens = lexer.scanTokens();
+        assert(countType(tokens, TOKEN_IDENTIFIER) == 4);
+        std::cout << "✅ Similar a keyword OK\n";
+    }
+}
+
+// ============================================
+// TEST 5: Operadores
+// ============================================
+void testOperatorsEvil() {
+    std::cout << "\n╔════════════════════════════════════════════════╗\n";
+    std::cout << "║  TEST 5: Operadores                           ║\n";
+    std::cout << "╚════════════════════════════════════════════════╝\n";
+    
+    // 5.1: Todos operadores single-char
+    {
+        std::string src = "+ - * / % ( ) { } , ;";
+        Lexer lexer(src);
+        auto tokens = lexer.scanTokens();
+        assert(countType(tokens, TOKEN_PLUS) == 1);
+        assert(countType(tokens, TOKEN_MINUS) == 1);
+        assert(countType(tokens, TOKEN_STAR) == 1);
+        std::cout << "✅ Operadores single-char OK\n";
+    }
+    
+    // 5.2: Operadores double-char
+    {
+        std::string src = "== != <= >= && ||";
+        Lexer lexer(src);
+        auto tokens = lexer.scanTokens();
+        assert(countType(tokens, TOKEN_EQUAL_EQUAL) == 1);
+        assert(countType(tokens, TOKEN_BANG_EQUAL) == 1);
+        assert(countType(tokens, TOKEN_AND_AND) == 1);
+        std::cout << "✅ Operadores double-char OK\n";
+    }
+    
+    // 5.3: & e | sozinhos (erro)
+    {
+        std::string src = "& |";
+        Lexer lexer(src);
+        auto tokens = lexer.scanTokens();
+        assert(countErrors(tokens) >= 2);
+        std::cout << "✅ & e | sozinhos rejeitados\n";
+    }
+    
+    // 5.4: Operadores grudados
+    {
+        std::string src = "a+b*c/d";
+        Lexer lexer(src);
+        auto tokens = lexer.scanTokens();
+        assert(countType(tokens, TOKEN_IDENTIFIER) == 4);
+        assert(countType(tokens, TOKEN_PLUS) == 1);
+        assert(countType(tokens, TOKEN_STAR) == 1);
+        std::cout << "✅ Operadores grudados OK\n";
+    }
+}
+
+// ============================================
+// TEST 6: Caracteres Inválidos
+// ============================================
+void testInvalidChars() {
+    std::cout << "\n╔════════════════════════════════════════════════╗\n";
+    std::cout << "║  TEST 6: Caracteres Inválidos                 ║\n";
+    std::cout << "╚════════════════════════════════════════════════╝\n";
+    
+    // 6.1: Símbolos inválidos
+    {
+        std::string src = "@ # $ ^";
+        Lexer lexer(src);
+        auto tokens = lexer.scanTokens();
+        assert(countErrors(tokens) >= 4);
+        std::cout << "✅ Símbolos inválidos rejeitados\n";
+    }
+    
+    // 6.2: Unicode (se não suportado)
+    {
+        std::string src = "var ñ = 10;";
+        Lexer lexer(src);
+        auto tokens = lexer.scanTokens();
+        // Pode aceitar ou rejeitar, depende da implementação
+        std::cout << "✅ Unicode tratado\n";
+    }
+}
+
+// ============================================
+// TEST 7: Arquivo Gigante
+// ============================================
+void testHugeFile() {
+    std::cout << "\n╔════════════════════════════════════════════════╗\n";
+    std::cout << "║  TEST 7: Arquivo Gigante (Performance)        ║\n";
+    std::cout << "╚════════════════════════════════════════════════╝\n";
+    
+    // Gera arquivo com 10k linhas
+    std::string src;
     for (int i = 0; i < 10000; i++) {
-        char buf[64];
-        snprintf(buf, 64, "string_number_%d", i);
-        
-        vm.PushString(buf);
-        vm.SetGlobal(buf);  // Guarda global
-        
-        if (i % 1000 == 0) {
-            printf("  %d strings created...\n", i);
-        }
+        src += "var x" + std::to_string(i) + " = " + std::to_string(i) + ";\n";
     }
     
-    printf("✅ Created 10000 strings\n");
-    printf("⚠️  Memory leak? Check with valgrind!\n");
+    std::cout << "  Source size: " << src.size() / 1024 << " KB\n";
     
-    // Limpa
-    printf("Clearing stack...\n");
-    while (vm.GetTop() > 0) {
-        vm.Pop();
+    auto start = high_resolution_clock::now();
+    
+    Lexer lexer(src);
+    auto tokens = lexer.scanTokens();
+    
+    auto end = high_resolution_clock::now();
+    auto duration = duration_cast<milliseconds>(end - start);
+    
+    std::cout << "  Tokens: " << tokens.size() << "\n";
+    std::cout << "  Time: " << duration.count() << " ms\n";
+    std::cout << "  Speed: " << (tokens.size() / (duration.count() / 1000.0)) 
+              << " tokens/sec\n";
+    
+    assert(countType(tokens, TOKEN_VAR) == 10000);
+    assert(countErrors(tokens) == 0);
+    
+    std::cout << "✅ Arquivo gigante OK\n";
+}
+
+// ============================================
+// TEST 8: Edge Cases
+// ============================================
+void testEdgeCases() {
+    std::cout << "\n╔════════════════════════════════════════════════╗\n";
+    std::cout << "║  TEST 8: Edge Cases                           ║\n";
+    std::cout << "╚════════════════════════════════════════════════╝\n";
+    
+    // 8.1: Arquivo vazio
+    {
+        std::string src = "";
+        Lexer lexer(src);
+        auto tokens = lexer.scanTokens();
+        assert(tokens.size() == 1);  // Apenas EOF
+        assert(tokens[0].type == TOKEN_EOF);
+        std::cout << "✅ Arquivo vazio OK\n";
+    }
+    
+    // 8.2: Apenas whitespace
+    {
+        std::string src = "   \n\n\t\t  \r\n  ";
+        Lexer lexer(src);
+        auto tokens = lexer.scanTokens();
+        assert(tokens.size() == 1);  // Apenas EOF
+        std::cout << "✅ Apenas whitespace OK\n";
+    }
+    
+    // 8.3: Apenas comentários
+    {
+        std::string src = "// comentário\n/* outro */";
+        Lexer lexer(src);
+        auto tokens = lexer.scanTokens();
+        assert(tokens.size() == 1);  // Apenas EOF
+        std::cout << "✅ Apenas comentários OK\n";
+    }
+    
+    // 8.4: Newline no fim
+    {
+        std::string src = "var x = 10;\n";
+        Lexer lexer(src);
+        auto tokens = lexer.scanTokens();
+        assert(countType(tokens, TOKEN_VAR) == 1);
+        std::cout << "✅ Newline no fim OK\n";
+    }
+    
+    // 8.5: Sem newline no fim
+    {
+        std::string src = "var x = 10;";
+        Lexer lexer(src);
+        auto tokens = lexer.scanTokens();
+        assert(countType(tokens, TOKEN_VAR) == 1);
+        std::cout << "✅ Sem newline no fim OK\n";
+    }
+    
+    // 8.6: Múltiplos semicolons
+    {
+        std::string src = ";;;";
+        Lexer lexer(src);
+        auto tokens = lexer.scanTokens();
+        assert(countType(tokens, TOKEN_SEMICOLON) == 3);
+        std::cout << "✅ Múltiplos semicolons OK\n";
     }
 }
 
 // ============================================
-// TEST 7: Invalid Indices
+// TEST 9: Stress Combinado
 // ============================================
-
-void testInvalidIndices() {
-    printf("\n=== TEST 7: Invalid Stack Indices ===\n");
+void testCombinedStress() {
+    std::cout << "\n╔════════════════════════════════════════════════╗\n";
+    std::cout << "║  TEST 9: Stress Combinado (Pesado!)          ║\n";
+    std::cout << "╚════════════════════════════════════════════════╝\n";
     
-    VM vm;
+    std::string src = R"(
+/* Comentário grande */ var x123_test = 42; // linha
+"string com
+múltiplas
+linhas"
+def func(a,b,c){if(a>0&&b<10||c==5){return a+b*c/2%3;}}
+/*aninhado?/*não*/ok*/var y=3.14159;
+for(var i=0;i<100;i=i+1){print("test");}
+// fim
+)";
     
-    vm.PushInt(10);
-    vm.PushInt(20);
+    Lexer lexer(src);
+    auto tokens = lexer.scanTokens();
     
-    printf("Stack size: %d\n", vm.GetTop());
+    std::cout << "  Total tokens: " << tokens.size() << "\n";
+    std::cout << "  Errors: " << countErrors(tokens) << "\n";
     
-    // Acesso inválido
-    printf("Test: Peek(999)...\n");
-    const Value& v1 = vm.Peek(999);
-    printf("Result type: %s\n", vm.TypeName(v1.type));
-    
-    printf("Test: Peek(-999)...\n");
-    const Value& v2 = vm.Peek(-999);
-    printf("Result type: %s\n", vm.TypeName(v2.type));
-    
-    printf("Test: ToInt(50)...\n");
-    int n = vm.ToInt(50);
-    printf("Result: %d\n", n);
-}
-
-// ============================================
-// TEST 8: Global Overwrite
-// ============================================
-
-void testGlobalOverwrite() {
-    printf("\n=== TEST 8: Global Overwrite ===\n");
-    
-    VM vm;
-    
-    // Set global várias vezes
-    for (int i = 0; i < 100; i++) {
-        vm.PushInt(i);
-        vm.SetGlobal("x");
+    if (countErrors(tokens) > 0) {
+        printErrors(tokens);
     }
     
-    vm.GetGlobal("x");
-    int result = vm.ToInt(-1);
-    vm.Pop();
-    
-    printf("Final value of x: %d\n", result);
-    
-    if (result == 99) {
-        printf("✅ Correctly overwrote\n");
-    } else {
-        printf("❌ Expected 99, got %d\n", result);
-    }
-    
-    printf("⚠️  99 strings leaked? Need GC!\n");
+    std::cout << "✅ Stress combinado completado\n";
 }
 
-// ============================================
-// TEST 9: Nested Calls
-// ============================================
-
-void testNestedCalls() {
-    printf("\n=== TEST 9: Nested Calls ===\n");
-    
-    VM vm;
-    
-    // a() calls b() calls c()
-    Function* cFunc = new Function("c", 0);
-    cFunc->chunk.write(OP_CONSTANT, 1);
-    cFunc->chunk.write(cFunc->chunk.addConstant(Value::makeInt(42)), 1);
-    cFunc->chunk.write(OP_RETURN, 1);
-    
-    Function* bFunc = new Function("b", 0);
-    int idx = bFunc->chunk.addConstant(Value::makeString("c"));
-    bFunc->chunk.write(OP_CALL, 1);
-    bFunc->chunk.write(idx, 1);
-    bFunc->chunk.write(0, 1);
-    bFunc->chunk.write(OP_RETURN, 1);
-    
-    Function* aFunc = new Function("a", 0);
-    idx = aFunc->chunk.addConstant(Value::makeString("b"));
-    aFunc->chunk.write(OP_CALL, 1);
-    aFunc->chunk.write(idx, 1);
-    aFunc->chunk.write(0, 1);
-    aFunc->chunk.write(OP_RETURN, 1);
-    
-    vm.registerFunction("c", cFunc);
-    vm.registerFunction("b", bFunc);
-    vm.registerFunction("a", aFunc);
-    
-    vm.Push(Value::makeFunction(vm.registerFunction("a", aFunc)));
-    vm.SetGlobal("a");
-    vm.Push(Value::makeFunction(vm.registerFunction("b", bFunc)));
-    vm.SetGlobal("b");
-    vm.Push(Value::makeFunction(vm.registerFunction("c", cFunc)));
-    vm.SetGlobal("c");
-    
-    printf("Calling a() -> b() -> c()...\n");
-    
-    vm.GetGlobal("a");
-    vm.Call(0, 1);
-    
-    int result = vm.ToInt(-1);
-    printf("Result: %d\n", result);
-    
-    if (result == 42) {
-        printf("✅ Nested calls work!\n");
-    }
-}
-
-// ============================================
-// TEST 10: Concurrent-like Stress
-// ============================================
-
-void testRapidFireCalls() {
-    printf("\n=== TEST 10: Rapid Fire Calls ===\n");
-    
-    VM vm;
-    
-    // Simple add function
-    Function* addFunc = new Function("add", 2);
-    addFunc->chunk.write(OP_GET_LOCAL, 1);
-    addFunc->chunk.write(0, 1);
-    addFunc->chunk.write(OP_GET_LOCAL, 1);
-    addFunc->chunk.write(1, 1);
-    addFunc->chunk.write(OP_ADD, 1);
-    addFunc->chunk.write(OP_RETURN, 1);
-    
-    uint16_t addIdx = vm.registerFunction("add", addFunc);
-    vm.Push(Value::makeFunction(addIdx));
-    vm.SetGlobal("add");
-    
-    printf("Calling add() 10000 times...\n");
-    
-    clock_t start = clock();
-    
-    for (int i = 0; i < 10000; i++) {
-        vm.GetGlobal("add");
-        vm.PushInt(i);
-        vm.PushInt(i + 1);
-        vm.Call(2, 1);
-        vm.Pop();  // descarta resultado
-    }
-    
-    clock_t end = clock();
-    double time = ((double)(end - start)) / CLOCKS_PER_SEC * 1000.0;
-    
-    printf("✅ 10000 calls in %.2f ms\n", time);
-    printf("   %.2f calls/ms\n", 10000.0 / time);
-}
-
-// ============================================
-// MAIN - Roda Todos
-// ============================================
-
+// // ============================================
+// // MAIN
+// // ============================================
 // int main() {
-//     printf("╔════════════════════════════════════╗\n");
-//     printf("║   VM STRESS TESTS - REBENTA ISTO  ║\n");
-//     printf("╚════════════════════════════════════╝\n");
+//     std::cout << "╔════════════════════════════════════════════════╗\n";
+//     std::cout << "║     LEXER STRESS TEST - SEM PIEDADE! 🔥      ║\n";
+//     std::cout << "╚════════════════════════════════════════════════╝\n";
     
-//     testStackOverflow();
-//     testStackUnderflow();
-//     testDeepRecursion();
-//     testCallStackOverflow();
-//     testTypeErrors();
-//     testMemoryStress();
-//     testInvalidIndices();
-//     testGlobalOverwrite();
-//     testNestedCalls();
-//     testRapidFireCalls();
-    
-//     printf("\n╔════════════════════════════════════╗\n");
-//     printf("║       STRESS TESTS COMPLETE        ║\n");
-//     printf("╚════════════════════════════════════╝\n");
-//     printf("\nRun with valgrind to check leaks:\n");
-//     printf("  valgrind --leak-check=full ./bin/stress_tests\n");
-    
-//     return 0;
+//     try {
+//         testCommentsEvil();
+//         testStringsEvil();
+//         testNumbersEvil();
+//         testIdentifiersEvil();
+//         testOperatorsEvil();
+//         testInvalidChars();
+//         testHugeFile();
+//         testEdgeCases();
+//         testCombinedStress();
+        
+//         std::cout << "\n╔════════════════════════════════════════════════╗\n";
+//         std::cout << "║        ✅ TODOS OS TESTES PASSARAM! 🎉        ║\n";
+//         std::cout << "║      LEXER É ROBUSTO E PRONTO! 💪🔥           ║\n";
+//         std::cout << "╚════════════════════════════════════════════════╝\n";
+        
+//         return 0;
+        
+//     } catch (const std::exception& e) {
+//         std::cerr << "\n❌ TESTE FALHOU: " << e.what() << std::endl;
+//         return 1;
+//     }
 // }
 
  
-
 // ============================================
-// BENCHMARK 1: Empty Call
+// TEST 1: Todos os Keywords
 // ============================================
-void benchEmptyCall() {
-    printf("\n╔════════════════════════════════════╗\n");
-    printf("║   BENCHMARK: Empty Function Call   ║\n");
-    printf("╚════════════════════════════════════╝\n\n");
+void testAllKeywords() {
+    std::cout << "\n╔════════════════════════════════════════════════╗\n";
+    std::cout << "║  TEST 1: Todos os Keywords (15 total)         ║\n";
+    std::cout << "╚════════════════════════════════════════════════╝\n";
     
-    VM vm;
+    std::string src = "var def if elif else while for return break continue true false nil print type";
+    Lexer lexer(src);
+    auto tokens = lexer.scanTokens();
     
-    // Cria função vazia
-    Function* emptyFunc = new Function("empty", 0);
-    emptyFunc->chunk.write(OP_NIL, 1);
-    emptyFunc->chunk.write(OP_RETURN, 1);
+    assert(countType(tokens, TOKEN_VAR) == 1);
+    assert(countType(tokens, TOKEN_DEF) == 1);
+    assert(countType(tokens, TOKEN_IF) == 1);
+    assert(countType(tokens, TOKEN_ELIF) == 1);
+    assert(countType(tokens, TOKEN_ELSE) == 1);
+    assert(countType(tokens, TOKEN_WHILE) == 1);
+    assert(countType(tokens, TOKEN_FOR) == 1);
+    assert(countType(tokens, TOKEN_RETURN) == 1);
+    assert(countType(tokens, TOKEN_BREAK) == 1);
+    assert(countType(tokens, TOKEN_CONTINUE) == 1);
+    assert(countType(tokens, TOKEN_TRUE) == 1);
+    assert(countType(tokens, TOKEN_FALSE) == 1);
+    assert(countType(tokens, TOKEN_NIL) == 1);
+    assert(countType(tokens, TOKEN_PRINT) == 1);
+    assert(countType(tokens, TOKEN_TYPE) == 1);
+    assert(countType(tokens, TOKEN_IDENTIFIER) == 0);  // Nenhum identificador!
     
-    uint16_t idx = vm.registerFunction("empty", emptyFunc);
-    vm.Push(Value::makeFunction(idx));
-    vm.SetGlobal("empty");
-    
-    // Warmup
-    printf("Warming up...\n");
-    for (int i = 0; i < 10000; i++) {
-        vm.GetGlobal("empty");
-        vm.Call(0, 0);
-    }
-    
-    // Benchmark
-    const int CALLS = 100000;
-    
-    printf("Running %d calls...\n", CALLS);
-    
-    auto start = high_resolution_clock::now();
-    
-    for (int i = 0; i < CALLS; i++) {
-        vm.GetGlobal("empty");
-        vm.Call(0, 0);
-    }
-    
-    auto end = high_resolution_clock::now();
-    auto duration = duration_cast<microseconds>(end - start);
-    
-    double ms = duration.count() / 1000.0;
-    double calls_per_ms = CALLS / ms;
-    double calls_per_sec = calls_per_ms * 1000;
-    
-    printf("\n📊 Results:\n");
-    printf("  Total time:  %.2f ms\n", ms);
-    printf("  Calls/ms:    %.0f\n", calls_per_ms);
-    printf("  Calls/sec:   %.0f\n", calls_per_sec);
-    printf("  Time/call:   %.2f µs\n", duration.count() / (double)CALLS);
+    std::cout << "✅ Todos 15 keywords reconhecidos corretamente\n";
 }
 
 // ============================================
-// BENCHMARK 2: Add Function
+// TEST 2: Todos os Operadores
 // ============================================
-void benchAddFunction() {
-    printf("\n╔════════════════════════════════════╗\n");
-    printf("║   BENCHMARK: Add Function (a+b)    ║\n");
-    printf("╚════════════════════════════════════╝\n\n");
+void testAllOperators() {
+    std::cout << "\n╔════════════════════════════════════════════════╗\n";
+    std::cout << "║  TEST 2: Todos os Operadores (21 total)       ║\n";
+    std::cout << "╚════════════════════════════════════════════════╝\n";
     
-    VM vm;
+    std::string src = "+ - * / % = == != < <= > >= && || ! ( ) { } , ;";
+    Lexer lexer(src);
+    auto tokens = lexer.scanTokens();
     
-    // Cria função add
-    Function* addFunc = new Function("add", 2);
-    addFunc->chunk.write(OP_GET_LOCAL, 1);
-    addFunc->chunk.write(0, 1);
-    addFunc->chunk.write(OP_GET_LOCAL, 1);
-    addFunc->chunk.write(1, 1);
-    addFunc->chunk.write(OP_ADD, 1);
-    addFunc->chunk.write(OP_RETURN, 1);
+    assert(countType(tokens, TOKEN_PLUS) == 1);
+    assert(countType(tokens, TOKEN_MINUS) == 1);
+    assert(countType(tokens, TOKEN_STAR) == 1);
+    assert(countType(tokens, TOKEN_SLASH) == 1);
+    assert(countType(tokens, TOKEN_PERCENT) == 1);
+    assert(countType(tokens, TOKEN_EQUAL) == 1);
+    assert(countType(tokens, TOKEN_EQUAL_EQUAL) == 1);
+    assert(countType(tokens, TOKEN_BANG_EQUAL) == 1);
+    assert(countType(tokens, TOKEN_LESS) == 1);
+    assert(countType(tokens, TOKEN_LESS_EQUAL) == 1);
+    assert(countType(tokens, TOKEN_GREATER) == 1);
+    assert(countType(tokens, TOKEN_GREATER_EQUAL) == 1);
+    assert(countType(tokens, TOKEN_AND_AND) == 1);
+    assert(countType(tokens, TOKEN_OR_OR) == 1);
+    assert(countType(tokens, TOKEN_BANG) == 1);
+    assert(countType(tokens, TOKEN_LPAREN) == 1);
+    assert(countType(tokens, TOKEN_RPAREN) == 1);
+    assert(countType(tokens, TOKEN_LBRACE) == 1);
+    assert(countType(tokens, TOKEN_RBRACE) == 1);
+    assert(countType(tokens, TOKEN_COMMA) == 1);
+    assert(countType(tokens, TOKEN_SEMICOLON) == 1);
+    assert(countErrors(tokens) == 0);
     
-    uint16_t idx = vm.registerFunction("add", addFunc);
-    vm.Push(Value::makeFunction(idx));
-    vm.SetGlobal("add");
-    
-    // Warmup
-    printf("Warming up...\n");
-    for (int i = 0; i < 10000; i++) {
-        vm.GetGlobal("add");
-        vm.PushInt(10);
-        vm.PushInt(20);
-        vm.Call(2, 1);
-        vm.Pop();
-    }
-    
-    // Benchmark
-    const int CALLS = 50000;
-    
-    printf("Running %d calls...\n", CALLS);
-    
-    auto start = high_resolution_clock::now();
-    
-    for (int i = 0; i < CALLS; i++) {
-        vm.GetGlobal("add");
-        vm.PushInt(i);
-        vm.PushInt(i + 1);
-        vm.Call(2, 1);
-        vm.Pop();
-    }
-    
-    auto end = high_resolution_clock::now();
-    auto duration = duration_cast<microseconds>(end - start);
-    
-    double ms = duration.count() / 1000.0;
-    double calls_per_ms = CALLS / ms;
-    double calls_per_sec = calls_per_ms * 1000;
-    
-    printf("\n📊 Results:\n");
-    printf("  Total time:  %.2f ms\n", ms);
-    printf("  Calls/ms:    %.0f\n", calls_per_ms);
-    printf("  Calls/sec:   %.0f\n", calls_per_sec);
-    printf("  Time/call:   %.2f µs\n", duration.count() / (double)CALLS);
+    std::cout << "✅ Todos 21 operadores reconhecidos\n";
 }
 
 // ============================================
-// BENCHMARK 3: Fibonacci
+// TEST 3: Operadores Grudados (Sem Espaço)
 // ============================================
-void benchFibonacci() {
-    printf("\n╔════════════════════════════════════╗\n");
-    printf("║   BENCHMARK: Fibonacci (fib)       ║\n");
-    printf("╚════════════════════════════════════╝\n\n");
+void testOperatorsNoSpace() {
+    std::cout << "\n╔════════════════════════════════════════════════╗\n";
+    std::cout << "║  TEST 3: Operadores Grudados                  ║\n";
+    std::cout << "╚════════════════════════════════════════════════╝\n";
     
-    VM vm;
+    // 3.1: Expressões complexas sem espaço
+    {
+        std::string src = "a+b*c/d-e%f";
+        Lexer lexer(src);
+        auto tokens = lexer.scanTokens();
+        assert(countType(tokens, TOKEN_IDENTIFIER) == 6);
+        assert(countType(tokens, TOKEN_PLUS) == 1);
+        assert(countType(tokens, TOKEN_STAR) == 1);
+        assert(countType(tokens, TOKEN_SLASH) == 1);
+        assert(countType(tokens, TOKEN_MINUS) == 1);
+        assert(countType(tokens, TOKEN_PERCENT) == 1);
+        std::cout << "✅ Expressão aritmética grudada OK\n";
+    }
     
-    // Cria função fib
-    Function* fibFunc = new Function("fib", 1);
-    Chunk& chunk = fibFunc->chunk;
+    // 3.2: Comparações grudadas
+    {
+        std::string src = "a==b!=c<d<=e>f>=g";
+        Lexer lexer(src);
+        auto tokens = lexer.scanTokens();
+        assert(countType(tokens, TOKEN_IDENTIFIER) == 7);
+        assert(countType(tokens, TOKEN_EQUAL_EQUAL) == 1);
+        assert(countType(tokens, TOKEN_BANG_EQUAL) == 1);
+        assert(countType(tokens, TOKEN_LESS) == 1);
+        assert(countType(tokens, TOKEN_LESS_EQUAL) == 1);
+        assert(countType(tokens, TOKEN_GREATER) == 1);
+        assert(countType(tokens, TOKEN_GREATER_EQUAL) == 1);
+        std::cout << "✅ Comparações grudadas OK\n";
+    }
     
-    // if (n < 2) return n;
-    chunk.write(OP_GET_LOCAL, 1);
-    chunk.write(0, 1);
-    int idx = chunk.addConstant(Value::makeInt(2));
-    chunk.write(OP_CONSTANT, 1);
-    chunk.write(idx, 1);
-    chunk.write(OP_LESS, 1);
-    chunk.write(OP_JUMP_IF_FALSE, 1);
-    int elseJump = chunk.count();
-    chunk.write(0, 1);
-    chunk.write(0, 1);
-    chunk.write(OP_POP, 1);
-    chunk.write(OP_GET_LOCAL, 1);
-    chunk.write(0, 1);
-    chunk.write(OP_RETURN, 1);
+    // 3.3: Lógicos grudados
+    {
+        std::string src = "a&&b||c";
+        Lexer lexer(src);
+        auto tokens = lexer.scanTokens();
+        assert(countType(tokens, TOKEN_IDENTIFIER) == 3);
+        assert(countType(tokens, TOKEN_AND_AND) == 1);
+        assert(countType(tokens, TOKEN_OR_OR) == 1);
+        std::cout << "✅ Operadores lógicos grudados OK\n";
+    }
     
-    int offset = chunk.count() - elseJump - 2;
-    chunk.code[elseJump] = (offset >> 8) & 0xff;
-    chunk.code[elseJump + 1] = offset & 0xff;
-    chunk.write(OP_POP, 1);
-    
-    // return fib(n-1) + fib(n-2);
-    chunk.write(OP_GET_LOCAL, 1);
-    chunk.write(0, 1);
-    idx = chunk.addConstant(Value::makeInt(1));
-    chunk.write(OP_CONSTANT, 1);
-    chunk.write(idx, 1);
-    chunk.write(OP_SUBTRACT, 1);
-    idx = chunk.addConstant(Value::makeString("fib"));
-    chunk.write(OP_CALL, 1);
-    chunk.write(idx, 1);
-    chunk.write(1, 1);
-    
-    chunk.write(OP_GET_LOCAL, 1);
-    chunk.write(0, 1);
-    idx = chunk.addConstant(Value::makeInt(2));
-    chunk.write(OP_CONSTANT, 1);
-    chunk.write(idx, 1);
-    chunk.write(OP_SUBTRACT, 1);
-    idx = chunk.addConstant(Value::makeString("fib"));
-    chunk.write(OP_CALL, 1);
-    chunk.write(idx, 1);
-    chunk.write(1, 1);
-    
-    chunk.write(OP_ADD, 1);
-    chunk.write(OP_RETURN, 1);
-    
-    uint16_t fibIdx = vm.registerFunction("fib", fibFunc);
-    vm.Push(Value::makeFunction(fibIdx));
-    vm.SetGlobal("fib");
-    
-    // Benchmark
-    int testValues[] = {20, 25, 30};
-    
-    for (int n : testValues) {
-        printf("\n--- fib(%d) ---\n", n);
-        
-        auto start = high_resolution_clock::now();
-        
-        vm.GetGlobal("fib");
-        vm.PushInt(n);
-        vm.Call(1, 1);
-        
-        auto end = high_resolution_clock::now();
-        auto duration = duration_cast<microseconds>(end - start);
-        
-        int result = vm.ToInt(-1);
-        vm.Pop();
-        
-        double ms = duration.count() / 1000.0;
-        
-        printf("Result: %d\n", result);
-        printf("Time:   %.2f ms\n", ms);
+    // 3.4: Parênteses e vírgulas
+    {
+        std::string src = "func(a,b,c)";
+        Lexer lexer(src);
+        auto tokens = lexer.scanTokens();
+        assert(countType(tokens, TOKEN_IDENTIFIER) == 4);
+        assert(countType(tokens, TOKEN_LPAREN) == 1);
+        assert(countType(tokens, TOKEN_RPAREN) == 1);
+        assert(countType(tokens, TOKEN_COMMA) == 2);
+        std::cout << "✅ Função grudada OK\n";
     }
 }
 
 // ============================================
-// BENCHMARK 4: Stack Operations
+// TEST 4: Números - Todos os Edge Cases
 // ============================================
-void benchStackOps() {
-    printf("\n╔════════════════════════════════════╗\n");
-    printf("║   BENCHMARK: Stack Operations      ║\n");
-    printf("╚════════════════════════════════════╝\n\n");
+void testNumbersComplete() {
+    std::cout << "\n╔════════════════════════════════════════════════╗\n";
+    std::cout << "║  TEST 4: Números - Todos os Edge Cases        ║\n";
+    std::cout << "╚════════════════════════════════════════════════╝\n";
     
-    VM vm;
-    
-    const int OPS = 1000000;
-    
-    printf("Running %d operations (push+peek+pop)...\n", OPS);
-    
-    auto start = high_resolution_clock::now();
-    
-    for (int i = 0; i < OPS; i++) {
-        vm.PushInt(i);
-        vm.Peek(-1);
-        vm.Pop();
+    // 4.1: Zeros
+    {
+        std::string src = "0 0.0 00 00.00";
+        Lexer lexer(src);
+        auto tokens = lexer.scanTokens();
+        assert(countType(tokens, TOKEN_INT) + countType(tokens, TOKEN_FLOAT) == 4);
+        std::cout << "✅ Zeros OK\n";
     }
     
-    auto end = high_resolution_clock::now();
-    auto duration = duration_cast<microseconds>(end - start);
+    // 4.2: Números grandes
+    {
+        std::string src = "2147483647 999999999 3.14159265 1234567.89";
+        Lexer lexer(src);
+        auto tokens = lexer.scanTokens();
+        assert(countType(tokens, TOKEN_INT) == 2);
+        assert(countType(tokens, TOKEN_FLOAT) == 2);
+        std::cout << "✅ Números grandes OK\n";
+    }
     
-    double ms = duration.count() / 1000.0;
-    double ops_per_ms = OPS / ms;
-    double ops_per_sec = ops_per_ms * 1000;
+    // 4.3: Números seguidos
+    {
+        std::string src = "123 456 789";
+        Lexer lexer(src);
+        auto tokens = lexer.scanTokens();
+        assert(countType(tokens, TOKEN_INT) == 3);
+        assert(hasToken(tokens, TOKEN_INT, "123"));
+        assert(hasToken(tokens, TOKEN_INT, "456"));
+        assert(hasToken(tokens, TOKEN_INT, "789"));
+        std::cout << "✅ Números consecutivos OK\n";
+    }
     
-    printf("\n📊 Results:\n");
-    printf("  Total time:  %.2f ms\n", ms);
-    printf("  Ops/ms:      %.0f\n", ops_per_ms);
-    printf("  Ops/sec:     %.0f (%.1fM/sec)\n", ops_per_sec, ops_per_sec/1000000.0);
+    // 4.4: Float vs Int
+    {
+        std::string src = "42 42.0 0 0.0";
+        Lexer lexer(src);
+        auto tokens = lexer.scanTokens();
+        assert(countType(tokens, TOKEN_INT) == 2);
+        assert(countType(tokens, TOKEN_FLOAT) == 2);
+        assert(hasToken(tokens, TOKEN_INT, "42"));
+        assert(hasToken(tokens, TOKEN_FLOAT, "42.0"));
+        std::cout << "✅ Int vs Float distinção OK\n";
+    }
+    
+    // 4.5: Números em expressões
+    {
+        std::string src = "10+20*30/40-50%60";
+        Lexer lexer(src);
+        auto tokens = lexer.scanTokens();
+        assert(countType(tokens, TOKEN_INT) == 6);
+        std::cout << "✅ Números em expressões OK\n";
+    }
+}
+
+// ============================================
+// TEST 5: Strings - Todos os Casos
+// ============================================
+void testStringsComplete() {
+    std::cout << "\n╔════════════════════════════════════════════════╗\n";
+    std::cout << "║  TEST 5: Strings - Todos os Casos             ║\n";
+    std::cout << "╚════════════════════════════════════════════════╝\n";
+    
+    // 5.1: String vazia
+    {
+        std::string src = "\"\"";
+        Lexer lexer(src);
+        auto tokens = lexer.scanTokens();
+        assert(countType(tokens, TOKEN_STRING) == 1);
+        assert(hasToken(tokens, TOKEN_STRING, ""));
+        std::cout << "✅ String vazia OK\n";
+    }
+    
+    // 5.2: String com espaços
+    {
+        std::string src = "\"hello world\"";
+        Lexer lexer(src);
+        auto tokens = lexer.scanTokens();
+        assert(countType(tokens, TOKEN_STRING) == 1);
+        assert(hasToken(tokens, TOKEN_STRING, "hello world"));
+        std::cout << "✅ String com espaços OK\n";
+    }
+    
+    // 5.3: String multi-linha
+    {
+        std::string src = "\"line1\nline2\nline3\"";
+        Lexer lexer(src);
+        auto tokens = lexer.scanTokens();
+        assert(countType(tokens, TOKEN_STRING) == 1);
+        std::cout << "✅ String multi-linha OK\n";
+    }
+    
+    // 5.4: Strings consecutivas
+    {
+        std::string src = "\"a\"\"b\"\"c\"";
+        Lexer lexer(src);
+        auto tokens = lexer.scanTokens();
+        assert(countType(tokens, TOKEN_STRING) == 3);
+        assert(hasToken(tokens, TOKEN_STRING, "a"));
+        assert(hasToken(tokens, TOKEN_STRING, "b"));
+        assert(hasToken(tokens, TOKEN_STRING, "c"));
+        std::cout << "✅ Strings consecutivas OK\n";
+    }
+    
+    // 5.5: String com caracteres especiais
+    {
+        std::string src = "\"!@#$%^&*()_+-={}[]|\\:;'<>?,./\"";
+        Lexer lexer(src);
+        auto tokens = lexer.scanTokens();
+        assert(countType(tokens, TOKEN_STRING) == 1);
+        std::cout << "✅ String com símbolos OK\n";
+    }
+    
+    // 5.6: String não fechada (erro)
+    {
+        std::string src = "\"never closes";
+        Lexer lexer(src);
+        auto tokens = lexer.scanTokens();
+        assert(countErrors(tokens) >= 1);
+        std::cout << "✅ String não fechada detectada\n";
+    }
+}
+
+// ============================================
+// TEST 6: Identificadores - Edge Cases
+// ============================================
+void testIdentifiersComplete() {
+    std::cout << "\n╔════════════════════════════════════════════════╗\n";
+    std::cout << "║  TEST 6: Identificadores - Edge Cases         ║\n";
+    std::cout << "╚════════════════════════════════════════════════╝\n";
+    
+    // 6.1: Identificadores simples
+    {
+        std::string src = "x y z abc test123";
+        Lexer lexer(src);
+        auto tokens = lexer.scanTokens();
+        assert(countType(tokens, TOKEN_IDENTIFIER) == 5);
+        std::cout << "✅ Identificadores simples OK\n";
+    }
+    
+    // 6.2: Com underscores
+    {
+        std::string src = "_test __private__ _123 test_var";
+        Lexer lexer(src);
+        auto tokens = lexer.scanTokens();
+        assert(countType(tokens, TOKEN_IDENTIFIER) == 4);
+        std::cout << "✅ Underscores OK\n";
+    }
+    
+    // 6.3: Parecidos com keywords
+    {
+        std::string src = "varx ifx elsex whilex forx variable";
+        Lexer lexer(src);
+        auto tokens = lexer.scanTokens();
+        assert(countType(tokens, TOKEN_IDENTIFIER) == 6);
+        assert(countType(tokens, TOKEN_VAR) == 0);
+        std::cout << "✅ Similar a keywords OK\n";
+    }
+    
+    // 6.4: Casos limítrofes
+    {
+        std::string src = "a A aA Aa _a a_ a1 a_1";
+        Lexer lexer(src);
+        auto tokens = lexer.scanTokens();
+        assert(countType(tokens, TOKEN_IDENTIFIER) == 8);
+        std::cout << "✅ Case-sensitive e combinações OK\n";
+    }
+}
+
+// ============================================
+// TEST 7: Comentários - Todos os Casos
+// ============================================
+void testCommentsComplete() {
+    std::cout << "\n╔════════════════════════════════════════════════╗\n";
+    std::cout << "║  TEST 7: Comentários - Todos os Casos         ║\n";
+    std::cout << "╚════════════════════════════════════════════════╝\n";
+    
+    // 7.1: Comentário linha simples
+    {
+        std::string src = "var x = 10; // comentário";
+        Lexer lexer(src);
+        auto tokens = lexer.scanTokens();
+        assert(countType(tokens, TOKEN_VAR) == 1);
+        assert(countType(tokens, TOKEN_IDENTIFIER) == 1);
+        std::cout << "✅ Comentário linha OK\n";
+    }
+    
+    // 7.2: Comentário bloco simples
+    {
+        std::string src = "var x = /* comentário */ 10;";
+        Lexer lexer(src);
+        auto tokens = lexer.scanTokens();
+        assert(countType(tokens, TOKEN_VAR) == 1);
+        assert(countType(tokens, TOKEN_INT) == 1);
+        std::cout << "✅ Comentário bloco OK\n";
+    }
+    
+    // 7.3: Comentário multi-linha
+    {
+        std::string src = "/*\nline1\nline2\nline3\n*/var x = 10;";
+        Lexer lexer(src);
+        auto tokens = lexer.scanTokens();
+        assert(countType(tokens, TOKEN_VAR) == 1);
+        std::cout << "✅ Comentário multi-linha OK\n";
+    }
+    
+    // 7.4: // dentro de /* */
+    {
+        std::string src = "/* test // ainda comentário */ var x = 10;";
+        Lexer lexer(src);
+        auto tokens = lexer.scanTokens();
+        assert(countType(tokens, TOKEN_VAR) == 1);
+        std::cout << "✅ // dentro de /* */ OK\n";
+    }
+    
+    // 7.5: /* dentro de //
+    {
+        std::string src = "// test /* não abre\nvar x = 10;";
+        Lexer lexer(src);
+        auto tokens = lexer.scanTokens();
+        assert(countType(tokens, TOKEN_VAR) == 1);
+        std::cout << "✅ /* dentro de // OK\n";
+    }
+    
+    // 7.6: Comentário não fechado
+    {
+        std::string src = "/* nunca fecha";
+        Lexer lexer(src);
+        auto tokens = lexer.scanTokens();
+        assert(countErrors(tokens) >= 1);
+        std::cout << "✅ Comentário não fechado detectado\n";
+    }
+}
+
+// ============================================
+// TEST 8: Line/Column Tracking
+// ============================================
+void testLineColumnTracking() {
+    std::cout << "\n╔════════════════════════════════════════════════╗\n";
+    std::cout << "║  TEST 8: Line/Column Tracking Preciso         ║\n";
+    std::cout << "╚════════════════════════════════════════════════╝\n";
+    
+    std::string src = "var x = 10;\nvar y = 20;\nvar z = 30;";
+    
+    std::cout << "Source:\n[" << src << "]\n\n";
+    
+    Lexer lexer(src);
+    auto tokens = lexer.scanTokens();
+    
+    // ✅ DEBUG: Mostra TODOS os tokens
+    std::cout << "Todos os tokens:\n";
+    for (const auto& t : tokens) {
+        std::cout << "  " << t.toString() << "\n";
+    }
+    
+    // Verifica linhas
+    int line1Count = 0, line2Count = 0, line3Count = 0;
+    for (const auto& t : tokens) {
+        if (t.line == 1) line1Count++;
+        if (t.line == 2) line2Count++;
+        if (t.line == 3) line3Count++;
+    }
+    
+    std::cout << "\nContagens:\n";
+    std::cout << "  Linha 1: " << line1Count << " tokens (esperado 5)\n";
+    std::cout << "  Linha 2: " << line2Count << " tokens (esperado 5)\n";
+    std::cout << "  Linha 3: " << line3Count << " tokens (esperado 5 ou 6 com EOF)\n";
+    
+    // ✅ CORREÇÃO: EOF pode estar na linha 3, então aceita 5 ou 6
+    assert(line1Count == 5);  // var x = 10 ;
+    assert(line2Count == 5);  // var y = 20 ;
+    assert(line3Count == 5 || line3Count == 6);  // var z = 30 ; (EOF)
+    
+    std::cout << "✅ Line tracking preciso\n";
+    
+    // Verifica colunas
+    bool firstTokensCorrect = true;
+    for (const auto& t : tokens) {
+        if (t.type == TOKEN_VAR) {
+            if (t.column != 1) {
+                std::cout << "❌ TOKEN_VAR não está em column 1: " << t.toString() << "\n";
+                firstTokensCorrect = false;
+            }
+        }
+    }
+    assert(firstTokensCorrect);
+    
+    std::cout << "✅ Column tracking preciso\n";
+}
+
+// ============================================
+// TEST 9: Script Real Completo
+// ============================================
+void testRealScript() {
+    std::cout << "\n╔════════════════════════════════════════════════╗\n";
+    std::cout << "║  TEST 9: Script Real Completo                 ║\n";
+    std::cout << "╚════════════════════════════════════════════════╝\n";
+    
+    std::string src = R"(
+// Fibonacci recursivo
+def fib(n) {
+    if (n < 2) {
+        return n;
+    }
+    return fib(n - 1) + fib(n - 2);
+}
+
+/* Main */
+var x = 10;
+var y = 20;
+
+if (x > 0 && y > 0) {
+    print("positivos");
+} elif (x == 0 || y == 0) {
+    print("zero");
+} else {
+    print("negativos");
+}
+
+for (var i = 0; i < 10; i = i + 1) {
+    var result = fib(i);
+    print(result);
+}
+)";
+    
+    Lexer lexer(src);
+    auto tokens = lexer.scanTokens();
+    
+    // ✅ CONTAGENS CORRETAS:
+    assert(countType(tokens, TOKEN_DEF) == 1);      // 1 def
+    assert(countType(tokens, TOKEN_IF) == 2);       // 2 ifs
+    assert(countType(tokens, TOKEN_ELIF) == 1);     // 1 elif
+    assert(countType(tokens, TOKEN_ELSE) == 1);     // 1 else
+    assert(countType(tokens, TOKEN_FOR) == 1);      // 1 for
+    assert(countType(tokens, TOKEN_VAR) == 4);      // x, y, i, result
+    assert(countType(tokens, TOKEN_RETURN) == 2);   // 2 returns
+    assert(countType(tokens, TOKEN_PRINT) == 4);    // ✅ 4 prints!
+    assert(countErrors(tokens) == 0);               // 0 erros
+    
+    std::cout << "✅ Script real completo OK\n";
+    std::cout << "  Total tokens: " << tokens.size() << "\n";
+    std::cout << "  Keywords: def=1, if=2, elif=1, else=1, for=1\n";
+    std::cout << "  Statements: var=4, return=2, print=4\n";
+    std::cout << "  Errors: 0\n";
+}
+
+
+// ============================================
+// TEST 10: Whitespace Extremo
+// ============================================
+void testWhitespaceExtreme() {
+    std::cout << "\n╔════════════════════════════════════════════════╗\n";
+    std::cout << "║  TEST 10: Whitespace Extremo                  ║\n";
+    std::cout << "╚════════════════════════════════════════════════╝\n";
+    
+    // 10.1: Múltiplos espaços
+    {
+        std::string src = "var     x     =     10     ;";
+        Lexer lexer(src);
+        auto tokens = lexer.scanTokens();
+        assert(countType(tokens, TOKEN_VAR) == 1);
+        assert(countType(tokens, TOKEN_IDENTIFIER) == 1);
+        std::cout << "✅ Múltiplos espaços OK\n";
+    }
+    
+    // 10.2: Tabs e espaços misturados
+    {
+        std::string src = "var\tx\t=\t10\t;";
+        Lexer lexer(src);
+        auto tokens = lexer.scanTokens();
+        assert(countType(tokens, TOKEN_VAR) == 1);
+        std::cout << "✅ Tabs OK\n";
+    }
+    
+    // 10.3: Múltiplas linhas vazias
+    {
+        std::string src = "var x = 10;\n\n\n\nvar y = 20;";
+        Lexer lexer(src);
+        auto tokens = lexer.scanTokens();
+        assert(countType(tokens, TOKEN_VAR) == 2);
+        std::cout << "✅ Linhas vazias OK\n";
+    }
 }
 
 // ============================================
 // MAIN
 // ============================================
 int main() {
-    printf("╔════════════════════════════════════════════════╗\n");
-    printf("║       VM PERFORMANCE BENCHMARKS                ║\n");
-    printf("║   High-precision timing (std::chrono)         ║\n");
-    printf("╚════════════════════════════════════════════════╝\n");
+    std::cout << "╔════════════════════════════════════════════════╗\n";
+    std::cout << "║   LEXER  TEST SUITE! 🔥           ║\n";
+    std::cout << "╚════════════════════════════════════════════════╝\n";
     
-    benchEmptyCall();
-    benchAddFunction();
-    benchFibonacci();
-    benchStackOps();
-    
-    printf("\n╔════════════════════════════════════════════════╗\n");
-    printf("║            BENCHMARKS COMPLETE                 ║\n");
-    printf("╚════════════════════════════════════════════════╝\n");
-    
-    printf("\n📊 Comparison:\n");
-    printf("  Lua 5.4:     57M empty calls/sec\n");
-    printf("  Python 3.12: 20M empty calls/sec\n");
-    printf("  Your VM:     Check results above!\n");
-    
-    return 0;
+    try {
+        testAllKeywords();
+        testAllOperators();
+        testOperatorsNoSpace();
+        testNumbersComplete();
+        testStringsComplete();
+        testIdentifiersComplete();
+        testCommentsComplete();
+        testLineColumnTracking();
+        testRealScript();
+        testWhitespaceExtreme();
+                testCommentsEvil();
+        testStringsEvil();
+        testNumbersEvil();
+        testIdentifiersEvil();
+        testOperatorsEvil();
+        testInvalidChars();
+        testHugeFile();
+        testEdgeCases();
+        testCombinedStress();
+        std::cout << "\n╔════════════════════════════════════════════════╗\n";
+        std::cout << "║     ✅✅✅ TODOS OS TESTES PASSARAM! ✅✅✅    ║\n";
+        std::cout << "╚════════════════════════════════════════════════╝\n";
+        
+        return 0;
+        
+    } catch (const std::exception& e) {
+        std::cerr << "\n❌ TESTE FALHOU: " << e.what() << std::endl;
+        return 1;
+    } catch (...) {
+        std::cerr << "\n❌ ERRO DESCONHECIDO!\n";
+        return 1;
+    }
 }
