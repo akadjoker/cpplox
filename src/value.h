@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <string>
 #include "String.h"
+#include <cstdint>
 
 enum ValueType
 {
@@ -22,17 +23,17 @@ struct Value
         bool boolean;
         int integer;
         double number;
-        String *string;
+        const char *stringPtr;
         int functionIdx;
     } as;
 
     // Constructors
     Value();
-    Value(const Value &other);
-    Value(Value &&other) noexcept;
-    Value &operator=(const Value &other);
-    Value &operator=(Value &&other) noexcept;
-    ~Value();
+    Value(const Value &other) = default;
+    Value(Value &&other) noexcept = default;
+    Value &operator=(const Value &other) = default;
+    Value &operator=(Value &&other) noexcept = default;
+    ~Value() = default;
 
     // Factory methods
     static Value makeNull();
@@ -43,7 +44,7 @@ struct Value
     static Value makeDouble(double d);
     static Value makeFloat(float f);
     static Value makeString(const char *str);
-    static Value makeString(const String &str);
+    static Value makeString(const std::string &str);
     static Value makeFunction(int idx);
 
     // Type checks
@@ -55,11 +56,12 @@ struct Value
     bool isFunction() const { return type == VAL_FUNCTION; }
 
     // Conversions
+
     bool asBool() const;
     int asInt() const;
     double asDouble() const;
     float asFloat() const;
-    String *asString() const;
+    const char *asString() const;
     int asFunctionIdx() const;
 };
 

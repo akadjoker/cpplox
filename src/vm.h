@@ -28,10 +28,8 @@ public:
     Value *getStackTop() { return stackTop_; }
     uint16_t registerFunction(const std::string &name, Function *func);
 
-    const std::unordered_map<std::string, Value> &getGlobals() const
-    {
-        return globals_;
-    }
+ 
+    uint32_t internGlobalName(const std::string& name) ;
 
     Function *getFunction(const char *name);
     Function *getFunction(uint16_t index);
@@ -90,7 +88,9 @@ private:
     int frameCount_;
     bool hasFatalError_;
 
-    std::unordered_map<std::string, Value> globals_;
+ 
+    std::vector<Value> globals_;
+ 
 
     std::vector<Function *> functions_;
     std::unordered_map<std::string, uint16_t> functionNames_;

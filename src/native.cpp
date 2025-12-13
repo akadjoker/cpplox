@@ -133,7 +133,7 @@ static Value nativeLen(VM *vm, int argCount, Value *args)
         return Value::makeNull();
     }
 
-    return Value::makeInt(args[0].asString()->size());
+    return Value::makeInt(strlen(args[0].asString()));
 }
 
 void NativeRegistry::registerBuiltins()

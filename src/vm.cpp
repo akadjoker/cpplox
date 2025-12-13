@@ -1,4 +1,5 @@
 #include "vm.h"
+#include "stringpool.h"
 #include <cstdio>
 #include <cstdarg>
 
@@ -8,12 +9,12 @@ CallFrame::CallFrame()
 VM::VM() : stackTop_(stack_), frameCount_(0), hasFatalError_(false)
 {
     natives_.registerBuiltins();
-   
+    StringPool::instance().clear();
 }
 
 VM::~VM()
 {
-    
+    StringPool::instance().clear();
     for (Function *func : functions_)
     {
         delete func;
@@ -50,6 +51,11 @@ uint16_t VM::registerFunction(const std::string &name, Function *func)
     functionNames_[name] = index;
 
     return index;
+}
+
+uint32_t VM::internGlobalName(const std::string &name)
+{
+    return StringPool::instance().getOrCreateId(name);
 }
 
 Function *VM::getFunction(const char *name)
@@ -347,7 +353,7 @@ const char *VM::ToString(int index)
         runtimeError("Expected string at index %d", index);
         return "";
     }
-    return v.asString()->c_str();
+    return v.asString();
 }
 
 bool VM::ToBool(int index)
@@ -513,22 +519,31 @@ bool VM::IsFunction(int index)
     return Peek(index).type == VAL_FUNCTION;
 }
 
-// Globals
 void VM::SetGlobal(const char *name)
 {
     Value value = Pop();
-    globals_[name] = value;
+    uint32_t id = StringPool::instance().getOrCreateId(name);
+
+    if (id >= globals_.size())
+    {
+        globals_.resize(id + 1, Value::makeNull());
+    }
+
+    globals_[id] = value;
 }
 
 void VM::GetGlobal(const char *name)
 {
-    if (globals_.find(name) == globals_.end())
+    uint32_t id = StringPool::instance().getOrCreateId(name);
+
+    if (id >= globals_.size() || globals_[id].type == VAL_NULL)
     {
         runtimeError("Undefined global '%s'", name);
         PushNull();
         return;
     }
-    Push(globals_[name]);
+
+    Push(globals_[id]);
 }
 
 void VM::Call(int argCount, int resultCount)
@@ -619,7 +634,7 @@ void VM::DumpStack()
             printf("double: %.2f\n", v.asDouble());
             break;
         case VAL_STRING:
-            printf("string: \"%s\"\n", v.asString()->c_str());
+            printf("string: \"%s\"\n", v.asString());
             break;
         case VAL_FUNCTION:
             printf("function: %d\n", v.asFunctionIdx());
@@ -640,12 +655,12 @@ void VM::DumpGlobals()
         return;
     }
 
-    for (const auto &[name, value] : globals_)
-    {
-        printf("  %s = ", name.c_str());
-        printValue(value);
-        printf("\n");
-    }
+    // for (const auto &[name, value] : globals_)
+    // {
+    //     // printf("  %s = ", name.c_str());
+    //     // printValue(value);
+    //     printf("\n");
+    // }
 
     printf("================================\n");
 }
@@ -719,7 +734,7 @@ bool VM::executeInstruction(CallFrame *&frame)
 #define READ_SHORT() \
     (frame->ip += 2, (uint16_t)((frame->ip[-2] << 8) | frame->ip[-1]))
 #define READ_CONSTANT() (frame->function->chunk.constants[READ_BYTE()])
-#define READ_STRING() (READ_CONSTANT().asString()->c_str())
+#define READ_STRING() (READ_CONSTANT().asString())
 
     uint8_t instruction = READ_BYTE();
 
@@ -756,7 +771,8 @@ bool VM::executeInstruction(CallFrame *&frame)
         // String concatenation
         if (a.isString() && b.isString())
         {
-            String result = *a.asString() + *b.asString();
+            std::string result = std::string(a.asString()) + std::string(b.asString());
+
             push(Value::makeString(result));
         }
         // Int + Int = Int
@@ -924,7 +940,7 @@ bool VM::executeInstruction(CallFrame *&frame)
         }
         else if (a.isString())
         {
-            push(Value::makeBool(*a.asString() == *b.asString()));
+            push(Value::makeBool(a.as.stringPtr == b.as.stringPtr));
         }
         else if (a.isDouble())
         {
@@ -956,7 +972,7 @@ bool VM::executeInstruction(CallFrame *&frame)
         }
         else if (a.isString())
         {
-            push(Value::makeBool(*a.asString() != *b.asString()));
+            push(Value::makeBool(a.as.stringPtr != b.as.stringPtr));
         }
         else if (a.isDouble())
         {
@@ -1106,47 +1122,54 @@ bool VM::executeInstruction(CallFrame *&frame)
         break;
     }
 
-    case OP_DEFINE_GLOBAL:
-    {
-        std::string name = READ_STRING();
-        Value value = pop();
-
-        if (globals_.count(name))
-        {
-            runtimeError("Variable '%s' already defined", name.c_str());
-            return false;
-        }
-
-        globals_[name] = value;
-        break;
-    }
-
     case OP_GET_GLOBAL:
     {
-        std::string name = READ_STRING();
+        uint32_t nameId = READ_CONSTANT().asInt();
 
-        auto it = globals_.find(name);
-        if (it == globals_.end())
+        if (nameId >= globals_.size() || globals_[nameId].type == VAL_NULL)
         {
-            runtimeError("Undefined variable '%s'", name.c_str());
+            runtimeError("Undefined variable '%s'",
+                         StringPool::instance().getString(nameId));
             return false;
         }
 
-        push(it->second);
+        push(globals_[nameId]);
         break;
     }
 
     case OP_SET_GLOBAL:
     {
-        std::string name = READ_STRING();
+        uint32_t nameId = READ_CONSTANT().asInt();
 
-        if (!globals_.count(name))
+        if (nameId >= globals_.size() || globals_[nameId].type == VAL_NULL)
         {
-            runtimeError("Undefined variable '%s'", name.c_str());
+            runtimeError("Undefined variable '%s'",
+                         StringPool::instance().getString(nameId));
             return false;
         }
 
-        globals_[name] = peek(0);
+        globals_[nameId] = peek(0);
+        break;
+    }
+
+    case OP_DEFINE_GLOBAL:
+    {
+        uint32_t nameId = READ_CONSTANT().asInt();
+        Value value = pop();
+
+        if (nameId >= globals_.size())
+        {
+            globals_.resize(nameId + 1, Value::makeNull());
+        }
+
+        if (globals_[nameId].type != VAL_NULL)
+        {
+            runtimeError("Variable '%s' already defined",
+                         StringPool::instance().getString(nameId));
+            return false;
+        }
+
+        globals_[nameId] = value;
         break;
     }
 
@@ -1188,24 +1211,23 @@ bool VM::executeInstruction(CallFrame *&frame)
 
     case OP_CALL:
     {
-        std::string name = READ_STRING();
+        uint16_t funcIdx = READ_SHORT(); 
         uint8_t argCount = READ_BYTE();
 
-        auto it = functionNames_.find(name);
-        if (it == functionNames_.end())
+        // Valida índice
+        if (funcIdx >= functions_.size())
         {
-            runtimeError("Undefined function '%s'", name.c_str());
+            runtimeError("Invalid function index: %d", funcIdx);
             return false;
         }
 
-        Function *function = functions_[it->second];
+        Function *function = functions_[funcIdx];  
 
         if (!callFunction(function, argCount))
         {
             return false;
         }
 
-        // Atualiza frame pointer após call
         frame = &frames_[frameCount_ - 1];
         break;
     }
