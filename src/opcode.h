@@ -35,6 +35,8 @@ enum Opcode : uint8_t
     OP_SET_LOCAL,
     OP_GET_GLOBAL,
     OP_SET_GLOBAL,
+    OP_DEFINE_GLOBAL,
+    
 
     // Control flow
     OP_JUMP,

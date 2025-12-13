@@ -31,6 +31,8 @@ private:
     CallFrame frames_[FRAMES_MAX];
     int frameCount_;
 
+   std::unordered_map<std::string, Value> globals_; 
+
     NativeRegistry natives_;
 
     bool run();

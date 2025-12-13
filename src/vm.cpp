@@ -351,6 +351,49 @@ bool VM::run()
             frame->slots[slot] = peek(0);
             break;
         }
+        case OP_DEFINE_GLOBAL:
+        {
+            std::string name = READ_STRING();
+            Value value = pop();
+
+            if (globals_.count(name))
+            {
+                runtimeError("Variable '%s' already defined", name.c_str());
+                return false;
+            }
+
+            globals_[name] = value;
+            break;
+        }
+
+        case OP_GET_GLOBAL:
+        {
+            std::string name = READ_STRING();
+
+            auto it = globals_.find(name);
+            if (it == globals_.end())
+            {
+                runtimeError("Undefined variable '%s'", name.c_str());
+                return false;
+            }
+
+            push(it->second);
+            break;
+        }
+
+        case OP_SET_GLOBAL:
+        {
+            std::string name = READ_STRING();
+
+            if (!globals_.count(name))
+            {
+                runtimeError("Undefined variable '%s'", name.c_str());
+                return false;
+            }
+
+            globals_[name] = peek(0); // não faz pop!
+            break;
+        }
 
         case OP_JUMP:
         {
