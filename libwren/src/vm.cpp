@@ -11,6 +11,7 @@ VM::VM() : stackTop_(stack_), frameCount_(0), hasFatalError_(false)
 {
     natives_.registerBuiltins();
     compiler = new Compiler(this);
+  
 }
 
 VM::~VM()
@@ -743,6 +744,11 @@ const char *VM::TypeName(ValueType type)
     default:
         return "unknown";
     }
+}
+
+bool VM::isNativeFunction(const char *name) const
+{
+    return natives_.hasFunction(name);
 }
 
 // ============================================

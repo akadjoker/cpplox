@@ -96,7 +96,11 @@ public:
     void DumpGlobals(); 
     const char *TypeName(ValueType type);
 
+    bool isNativeFunction(const char* name) const;
+    
+
 private:
+    friend class Compiler;
     Compiler* compiler;
     Value stack_[STACK_MAX];
     Value *stackTop_;

@@ -48,6 +48,8 @@ struct LoopContext
     int scopeDepth;              // Scope depth do loop
 };
 
+#define MAX_LOCALS 256
+
 class Compiler
 {
 public:
@@ -134,6 +136,9 @@ private:
     void printStatement();
     void ifStatement();
     void whileStatement();
+    void doWhileStatement();
+    void loopStatement();
+    void switchStatement();
     void forStatement();
     void returnStatement();
     void block();

@@ -25,6 +25,13 @@ enum TokenType
     TOKEN_RETURN,
     TOKEN_BREAK,
     TOKEN_CONTINUE,
+    TOKEN_DO,
+    TOKEN_LOOP,
+    TOKEN_SWITCH,
+    TOKEN_CASE,
+    TOKEN_DEFAULT,
+    
+
 
     // Operators - Arithmetic
     TOKEN_PLUS,
@@ -66,6 +73,7 @@ enum TokenType
     TOKEN_PLUS_PLUS,       // ++
     TOKEN_MINUS_MINUS,     // --
 
+    TOKEN_COLON,           // :
     // Built-ins
     TOKEN_PRINT,
     TOKEN_TYPE,

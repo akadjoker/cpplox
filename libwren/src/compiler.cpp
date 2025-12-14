@@ -551,6 +551,14 @@ void Compiler::statement()
     {
         whileStatement();
     }
+    else if (match(TOKEN_DO))
+    {
+        doWhileStatement();
+    }
+    else if (match(TOKEN_LOOP))
+    {
+        loopStatement();
+    }
     else if (match(TOKEN_FOR))
     {
         forStatement();
@@ -558,6 +566,10 @@ void Compiler::statement()
     else if (match(TOKEN_BREAK))
     {
         breakStatement();
+    }
+    else if (match(TOKEN_SWITCH))
+    {
+        switchStatement();
     }
     else if (match(TOKEN_CONTINUE))
     {
@@ -625,7 +637,25 @@ void Compiler::varDeclaration()
 
 void Compiler::variable(bool canAssign)
 {
-    namedVariable(previous, canAssign);
+    Token name = previous;
+    
+    if (check(TOKEN_LPAREN)) 
+    {
+        const char* interned = StringPool::instance().intern(name.lexeme);
+        
+        if (vm_->natives_.hasFunction(interned)) 
+        {
+            advance();  // Consome '('
+            uint8_t argCount = argumentList();        
+            uint8_t nameIdx = makeConstant(Value::makeString(interned));
+            emitBytes(OP_CALL_NATIVE, nameIdx);
+            emitByte(argCount);
+            return;  
+        }
+    }
+    
+ 
+    namedVariable(name, canAssign);
 }
 
 void Compiler::and_(bool canAssign)
@@ -681,16 +711,17 @@ void Compiler::namedVariable(Token &name, bool canAssign)
         emitConstant(Value::makeInt(1));
         emitByte(OP_ADD);
         emitBytes(setOp, (uint8_t)arg);
-        emitByte(OP_POP);  
+        emitByte(OP_POP);
     }
     else if (match(TOKEN_MINUS_MINUS))
     {
         // i-- (postfix)
-        emitBytes(getOp, (uint8_t)arg);
-        emitBytes(getOp, (uint8_t)arg);
-        emitConstant(Value::makeInt(1));
-        emitByte(OP_SUBTRACT);
-        emitBytes(setOp, (uint8_t)arg);
+        emitBytes(getOp, (uint8_t)arg);  // Lê i → Stack: [5]
+        emitBytes(getOp, (uint8_t)arg);  // Lê i → Stack: [5, 5]
+        emitConstant(Value::makeInt(1)); // Stack: [5, 5, 1]
+        emitByte(OP_SUBTRACT);           // Stack: [5, 4]
+        emitBytes(setOp, (uint8_t)arg);  // Guarda 4, Stack: [5, 4]
+        emitByte(OP_POP);                // Stack: [5]
     }
     else if (canAssign && match(TOKEN_EQUAL))
     {
@@ -1031,6 +1062,179 @@ void Compiler::whileStatement()
     patchJump(exitJump);
     emitByte(OP_POP);
 }
+void Compiler::doWhileStatement()
+{
+    // do
+    consume(TOKEN_LBRACE, "Expect '{' after 'do'");
+
+    int loopStart = currentChunk->count();
+
+    beginLoop(loopStart);
+
+    // BODY (executa primeiro)
+    beginScope();
+    block();
+    endScope();
+
+    // while (condition)
+    consume(TOKEN_WHILE, "Expect 'while' after do body");
+    consume(TOKEN_LPAREN, "Expect '(' after 'while'");
+    expression(); // Condição
+    consume(TOKEN_RPAREN, "Expect ')' after condition");
+    consume(TOKEN_SEMICOLON, "Expect ';' after do-while");
+
+    // Se condição for TRUE, volta ao início
+    int exitJump = emitJump(OP_JUMP_IF_FALSE);
+    emitByte(OP_POP); // Pop se true
+    emitLoop(loopStart);
+
+    patchJump(exitJump);
+    emitByte(OP_POP); // Pop se false
+
+    endLoop();
+}
+
+void Compiler::loopStatement()
+{
+    // loop { ... }
+
+    int loopStart = currentChunk->count();
+
+    beginLoop(loopStart);
+
+    // Body
+    consume(TOKEN_LBRACE, "Expect '{' after 'loop'");
+    beginScope();
+    block();
+    endScope();
+
+    // Volta sempre ao início (loop infinito)
+    emitLoop(loopStart);
+
+    // Patch dos breaks (única forma de sair!)
+    endLoop();
+}
+
+void Compiler::switchStatement()
+{
+    consume(TOKEN_LPAREN, "Expect '(' after 'switch'");
+    expression(); // Valor do switch fica na stack
+    consume(TOKEN_RPAREN, "Expect ')' after switch expression");
+
+    consume(TOKEN_LBRACE, "Expect '{' before switch body");
+
+    // Variável temporária para guardar o valor do switch
+    // Guardamos em local slot se possível
+    int switchValueSlot = -1;
+    if (scopeDepth > 0)
+    {
+        // Local: adiciona variável temporária
+        Token temp;
+        temp.lexeme = "__switch_temp__";
+        addLocal(temp);
+        markInitialized();
+        switchValueSlot = locals.size() - 1;
+        emitBytes(OP_SET_LOCAL, (uint8_t)switchValueSlot);
+    }
+    else
+    {
+        // Global: cria variável temporária
+        const char *tempName = StringPool::instance().intern("__switch_temp__");
+        uint8_t globalIdx = makeConstant(Value::makeString(tempName));
+        emitBytes(OP_DEFINE_GLOBAL, globalIdx);
+    }
+
+    std::vector<int> caseEndJumps; // Jumps para o fim do switch
+    int defaultStart = -1;
+    bool hasDefault = false;
+
+    // Parse todos os cases
+    while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF))
+    {
+        if (match(TOKEN_CASE))
+        {
+            // case VALUE:
+
+            // Carrega valor do switch
+            if (switchValueSlot != -1)
+            {
+                emitBytes(OP_GET_LOCAL, (uint8_t)switchValueSlot);
+            }
+            else
+            {
+                const char *tempName = StringPool::instance().intern("__switch_temp__");
+                uint8_t globalIdx = makeConstant(Value::makeString(tempName));
+                emitBytes(OP_GET_GLOBAL, globalIdx);
+            }
+
+            // Valor do case
+            expression();
+            consume(TOKEN_COLON, "Expect ':' after case value");
+
+            // Compara
+            emitByte(OP_EQUAL);
+
+            // Se NÃO for igual, pula este case
+            int skipCase = emitJump(OP_JUMP_IF_FALSE);
+            emitByte(OP_POP); // Pop do resultado true
+
+            // Executa statements do case
+            while (!check(TOKEN_CASE) && !check(TOKEN_DEFAULT) &&
+                   !check(TOKEN_RBRACE) && !check(TOKEN_EOF))
+            {
+                statement();
+            }
+
+            // Break implícito - pula para o fim
+            caseEndJumps.push_back(emitJump(OP_JUMP));
+
+            // Se não era igual, pula para aqui (próximo case)
+            patchJump(skipCase);
+            emitByte(OP_POP); // Pop do resultado false
+        }
+        else if (match(TOKEN_DEFAULT))
+        {
+            // default:
+            consume(TOKEN_COLON, "Expect ':' after 'default'");
+
+            if (hasDefault)
+            {
+                error("Switch can only have one 'default' case");
+            }
+            hasDefault = true;
+
+            // Executa statements
+            while (!check(TOKEN_CASE) && !check(TOKEN_RBRACE) && !check(TOKEN_EOF))
+            {
+                statement();
+            }
+        }
+        else
+        {
+            errorAtCurrent("Expect 'case' or 'default' in switch body");
+            break;
+        }
+    }
+
+    consume(TOKEN_RBRACE, "Expect '}' after switch body");
+
+    // Patch todos os jumps de fim de case
+    for (int jump : caseEndJumps)
+    {
+        patchJump(jump);
+    }
+
+    // Limpa variável temporária do switch
+    if (switchValueSlot != -1)
+    {
+        // Local - já vai ser limpo pelo endScope se necessário
+    }
+    else
+    {
+        // Global - podemos deixar (ou limpar se quiseres)
+    }
+}
+
 void Compiler::breakStatement()
 {
     emitBreak();
