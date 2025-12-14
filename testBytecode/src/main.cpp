@@ -1,6 +1,5 @@
 #include "chunk.h"
 #include "vm.h"
-#include "stringpool.h" 
 #include "debug.h"
 #include <cstdio>
 #include <ctime>
@@ -10,10 +9,11 @@
 using namespace std::chrono;
 
 
-
+ 
+ 
 
 // ============================================
-// BENCHMARK 1: Empty Call (SEM MUDANÇAS)
+// BENCHMARK 1: Empty Call
 // ============================================
 void benchEmptyCall() {
     printf("\n╔════════════════════════════════════╗\n");
@@ -65,7 +65,7 @@ void benchEmptyCall() {
 }
 
 // ============================================
-// BENCHMARK 2: Add Function (SEM MUDANÇAS)
+// BENCHMARK 2: Add Function
 // ============================================
 void benchAddFunction() {
     printf("\n╔════════════════════════════════════╗\n");
@@ -127,7 +127,7 @@ void benchAddFunction() {
 }
 
 // ============================================
-// BENCHMARK 3: Fibonacci (✅ CORRIGIDO!)
+// BENCHMARK 3: Fibonacci
 // ============================================
 void benchFibonacci() {
     printf("\n╔════════════════════════════════════╗\n");
@@ -139,9 +139,6 @@ void benchFibonacci() {
     // Cria função fib
     Function* fibFunc = new Function("fib", 1);
     Chunk& chunk = fibFunc->chunk;
-    
-    // ✅ IMPORTANTE: Registra função PRIMEIRO para pegar índice
-    uint16_t fibIdx = vm.registerFunction("fib", fibFunc);
     
     // if (n < 2) return n;
     chunk.write(OP_GET_LOCAL, 1);
@@ -164,39 +161,33 @@ void benchFibonacci() {
     chunk.code[elseJump + 1] = offset & 0xff;
     chunk.write(OP_POP, 1);
     
-    // ✅ MUDANÇA: return fib(n-1) + fib(n-2);
-    // Primeira chamada: fib(n-1)
+    // return fib(n-1) + fib(n-2);
     chunk.write(OP_GET_LOCAL, 1);
     chunk.write(0, 1);
     idx = chunk.addConstant(Value::makeInt(1));
     chunk.write(OP_CONSTANT, 1);
     chunk.write(idx, 1);
     chunk.write(OP_SUBTRACT, 1);
-    
-    // ✅ OP_CALL com índice direto (não string!)
+    idx = chunk.addConstant(Value::makeString("fib"));
     chunk.write(OP_CALL, 1);
-    chunk.write((fibIdx >> 8) & 0xFF, 1);  // High byte
-    chunk.write(fibIdx & 0xFF, 1);         // Low byte
-    chunk.write(1, 1);                     // argCount
+    chunk.write(idx, 1);
+    chunk.write(1, 1);
     
-    // Segunda chamada: fib(n-2)
     chunk.write(OP_GET_LOCAL, 1);
     chunk.write(0, 1);
     idx = chunk.addConstant(Value::makeInt(2));
     chunk.write(OP_CONSTANT, 1);
     chunk.write(idx, 1);
     chunk.write(OP_SUBTRACT, 1);
-    
-    // ✅ OP_CALL com índice direto (não string!)
+    idx = chunk.addConstant(Value::makeString("fib"));
     chunk.write(OP_CALL, 1);
-    chunk.write((fibIdx >> 8) & 0xFF, 1);  // High byte
-    chunk.write(fibIdx & 0xFF, 1);         // Low byte
-    chunk.write(1, 1);                     // argCount
+    chunk.write(idx, 1);
+    chunk.write(1, 1);
     
     chunk.write(OP_ADD, 1);
     chunk.write(OP_RETURN, 1);
     
-    // Define global
+    uint16_t fibIdx = vm.registerFunction("fib", fibFunc);
     vm.Push(Value::makeFunction(fibIdx));
     vm.SetGlobal("fib");
     
@@ -226,7 +217,7 @@ void benchFibonacci() {
 }
 
 // ============================================
-// BENCHMARK 4: Stack Operations (SEM MUDANÇAS)
+// BENCHMARK 4: Stack Operations
 // ============================================
 void benchStackOps() {
     printf("\n╔════════════════════════════════════╗\n");
@@ -260,38 +251,7 @@ void benchStackOps() {
     printf("  Ops/sec:     %.0f (%.1fM/sec)\n", ops_per_sec, ops_per_sec/1000000.0);
 }
 
-// ============================================
-// String Interning Test (SEM MUDANÇAS)
-// ============================================
-void testStringInterning() {
-    printf("\n=== String Interning Test ===\n");
-    
-    StringPool::instance().clear();
-    
-    clock_t start = clock();
-    
-    for (int i = 0; i < 100000; i++) {
-        Value v = Value::makeString("hello");
-    }
-    
-    clock_t end = clock();
-    double ms = (end - start) * 1000.0 / CLOCKS_PER_SEC;
-    
-    printf("Created 100000 strings in %.2f ms\n", ms);
-    printf("Pool size: %zu (should be 1!)\n", 
-           StringPool::instance().size());
-    
-    StringPool::instance().dumpStats();
-    
-    Value v1 = Value::makeString("test");
-    Value v2 = Value::makeString("test");
-    
-    printf("\nComparison test:\n");
-    printf("  v1.stringPtr: %p\n", v1.as.stringPtr);
-    printf("  v2.stringPtr: %p\n", v2.as.stringPtr);
-    printf("  Same pointer: %s\n", 
-           v1.as.stringPtr == v2.as.stringPtr ? "YES ✅" : "NO ❌");
-}
+
 
 // ============================================
 // MAIN
@@ -300,14 +260,12 @@ int main() {
     printf("╔════════════════════════════════════════════════╗\n");
     printf("║       VM PERFORMANCE BENCHMARKS                ║\n");
     printf("║   High-precision timing (std::chrono)         ║\n");
-    printf("║   ✅ Using direct function indices (fast!)    ║\n");
     printf("╚════════════════════════════════════════════════╝\n");
     
     benchEmptyCall();
     benchAddFunction();
     benchFibonacci();
     benchStackOps();
-    testStringInterning();
     
     printf("\n╔════════════════════════════════════════════════╗\n");
     printf("║            BENCHMARKS COMPLETE                 ║\n");
@@ -317,7 +275,6 @@ int main() {
     printf("  Lua 5.4:     57M empty calls/sec\n");
     printf("  Python 3.12: 20M empty calls/sec\n");
     printf("  Your VM:     Check results above!\n");
-    printf("  (Now with optimized function calls!) 🚀\n");
     
     return 0;
 }

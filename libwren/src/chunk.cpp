@@ -6,6 +6,16 @@ void Chunk::write(uint8_t byte, int line)
     lines.push_back(line);
 }
 
+const char *Chunk::getStringPtr(size_t index) const
+{
+    const Value &v = constants[index];
+    if (v.type == VAL_STRING)
+    {
+        return v.as.string;
+    }
+    return nullptr;
+}
+
 int Chunk::addConstant(Value value)
 {
     constants.push_back(value);
@@ -13,4 +23,4 @@ int Chunk::addConstant(Value value)
 }
 
 Function::Function(const std::string &n, int a)
-    : arity(a), name(n) {}
+    : arity(a), name(n), hasReturn(false) {}

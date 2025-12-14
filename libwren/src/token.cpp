@@ -77,6 +77,7 @@ const char *tokenTypeToString(TokenType type)
         return "SLASH";
     case TOKEN_PERCENT:
         return "PERCENT";
+    
 
     case TOKEN_EQUAL:
         return "EQUAL";

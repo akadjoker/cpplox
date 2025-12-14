@@ -10,6 +10,8 @@ struct Chunk
     std::vector<Value> constants;
     std::vector<int> lines;
 
+    const char* getStringPtr(size_t index) const ;
+    
     void write(uint8_t byte, int line);
     int addConstant(Value value);
 
@@ -21,6 +23,7 @@ struct Function
     int arity;
     Chunk chunk;
     std::string name;
+    bool hasReturn;
 
     Function(const std::string &n = "<script>", int a = 0);
 };

@@ -1,5 +1,6 @@
 #include "vm.h"
 #include "stringpool.h"
+#include "compiler.h"
 #include <cstdio>
 #include <cstdarg>
 
@@ -9,11 +10,13 @@ CallFrame::CallFrame()
 VM::VM() : stackTop_(stack_), frameCount_(0), hasFatalError_(false)
 {
     natives_.registerBuiltins();
-    StringPool::instance().clear();
+    compiler = new Compiler(this);
 }
 
 VM::~VM()
 {
+
+    delete compiler;
     StringPool::instance().clear();
     for (Function *func : functions_)
     {
@@ -23,20 +26,20 @@ VM::~VM()
 
 uint16_t VM::registerFunction(const std::string &name, Function *func)
 {
-    // Valida
     if (!func)
     {
         runtimeError("Cannot register null function");
         return 0;
     }
 
-    auto it = functionNames_.find(name);
+    // Intern name ONCE
+    const char *internedName = StringPool::instance().intern(name);
 
+    auto it = functionNames_.find(internedName);
     if (it != functionNames_.end())
     {
-
         fprintf(stderr, "Warning: Function '%s' already registered at index %d\n",
-                name.c_str(), it->second);
+                internedName, it->second);
         return it->second;
     }
 
@@ -48,14 +51,15 @@ uint16_t VM::registerFunction(const std::string &name, Function *func)
 
     uint16_t index = static_cast<uint16_t>(functions_.size());
     functions_.push_back(func);
-    functionNames_[name] = index;
+    functionNames_[internedName] = index;
 
     return index;
 }
 
-uint32_t VM::internGlobalName(const std::string &name)
+bool VM::canRegisterFunction(const std::string &name)
 {
-    return StringPool::instance().getOrCreateId(name);
+    const char *internedName = StringPool::instance().intern(name);
+    return functionNames_.find(internedName) == functionNames_.end();
 }
 
 Function *VM::getFunction(const char *name)
@@ -86,31 +90,33 @@ void VM::resetStack()
     frameCount_ = 0;
 }
 
-void VM::registerNative(const std::string &name, int arity, NativeFunction fn)
+void VM::registerNative(const char *name, int arity, NativeFunction fn)
 {
-    if (natives_.hasFunction(name))
+    const char *internedName = StringPool::instance().intern(name);
+
+    if (natives_.hasFunction(internedName))
     {
-        runtimeError("Native function '%s' already registered", name.c_str());
+        runtimeError("Native function '%s' already registered", internedName);
         return;
     }
 
-    natives_.registerFunction(name, arity, fn);
+    natives_.registerFunction(internedName, arity, fn);
 }
 
-bool VM::callNative(const std::string &name, int argCount)
+bool VM::callNative(const char *name, int argCount)
 {
     NativeFn *native = natives_.getFunction(name);
 
     if (!native)
     {
-        runtimeError("Undefined native function '%s'", name.c_str());
+        runtimeError("Undefined native function '%s'", name);
         return false;
     }
 
     if (native->arity != -1 && argCount != native->arity)
     {
         runtimeError("%s() expects %d arguments but got %d",
-                     name.c_str(), native->arity, argCount);
+                     name, native->arity, argCount);
         return false;
     }
 
@@ -151,7 +157,8 @@ bool VM::callFunction(Function *function, int argCount)
 
 InterpretResult VM::interpret(Function *function)
 {
-    push(Value::makeFunction(0));
+
+   // push(Value::makeNull());
 
     CallFrame *frame = &frames_[frameCount_++];
     frame->function = function;
@@ -159,6 +166,60 @@ InterpretResult VM::interpret(Function *function)
     frame->slots = stack_;
 
     return run() ? InterpretResult::OK : InterpretResult::RUNTIME_ERROR;
+}
+
+InterpretResult VM::interpret(const std::string &source)
+{
+    Function *function = compiler->compile(source, this);
+    if (!function)
+    {
+        return InterpretResult::COMPILE_ERROR;
+    }
+   //push(Value::makeNull());
+
+    CallFrame *frame = &frames_[frameCount_++];
+    frame->function = function;
+    frame->ip = function->chunk.code.data();
+    frame->slots = stack_;
+
+    bool status = run();
+    if (!status)
+    {
+        delete function;
+        return InterpretResult::RUNTIME_ERROR;
+    }
+    else
+    {
+        delete function;
+        return InterpretResult::OK;
+    }
+}
+
+InterpretResult VM::interpretExpression(const std::string &source)
+{
+    Function *function = compiler->compileExpression(source, this);
+    if (!function)
+    {
+        return InterpretResult::COMPILE_ERROR;
+    }
+    push(Value::makeNull());
+
+    CallFrame *frame = &frames_[frameCount_++];
+    frame->function = function;
+    frame->ip = function->chunk.code.data();
+    frame->slots = stack_;
+
+    bool status = run();
+    if (!status)
+    {
+        delete function;
+        return InterpretResult::RUNTIME_ERROR;
+    }
+    else
+    {
+        delete function;
+        return InterpretResult::OK;
+    }
 }
 
 bool VM::isTruthy(const Value &value)
@@ -519,31 +580,29 @@ bool VM::IsFunction(int index)
     return Peek(index).type == VAL_FUNCTION;
 }
 
+// Globals
 void VM::SetGlobal(const char *name)
 {
-    Value value = Pop();
-    uint32_t id = StringPool::instance().getOrCreateId(name);
-
-    if (id >= globals_.size())
+    if (globals_.find(name) != globals_.end())
     {
-        globals_.resize(id + 1, Value::makeNull());
+        runtimeError("Global '%s' already exists", name);
+        return;
     }
-
-    globals_[id] = value;
+    Value value = Pop();
+    globals_[name] = value;
 }
 
 void VM::GetGlobal(const char *name)
 {
-    uint32_t id = StringPool::instance().getOrCreateId(name);
-
-    if (id >= globals_.size() || globals_[id].type == VAL_NULL)
+    const char* interned = StringPool::instance().intern(name);
+    
+    if (globals_.find(interned) == globals_.end())
     {
-        runtimeError("Undefined global '%s'", name);
+        runtimeError("Undefined global '%s'", interned);
         PushNull();
         return;
     }
-
-    Push(globals_[id]);
+    Push(globals_[interned]);
 }
 
 void VM::Call(int argCount, int resultCount)
@@ -657,8 +716,8 @@ void VM::DumpGlobals()
 
     // for (const auto &[name, value] : globals_)
     // {
-    //     // printf("  %s = ", name.c_str());
-    //     // printValue(value);
+    //     printf("  %s = ", name);
+    //     printValue(value);
     //     printf("\n");
     // }
 
@@ -731,10 +790,9 @@ bool VM::executeInstruction(CallFrame *&frame)
         return false;
 
 #define READ_BYTE() (*frame->ip++)
-#define READ_SHORT() \
-    (frame->ip += 2, (uint16_t)((frame->ip[-2] << 8) | frame->ip[-1]))
+#define READ_SHORT() (frame->ip += 2, (uint16_t)((frame->ip[-2] << 8) | frame->ip[-1]))
 #define READ_CONSTANT() (frame->function->chunk.constants[READ_BYTE()])
-#define READ_STRING() (READ_CONSTANT().asString())
+#define READ_STRING_PTR() (frame->function->chunk.getStringPtr(READ_BYTE()))
 
     uint8_t instruction = READ_BYTE();
 
@@ -762,7 +820,12 @@ bool VM::executeInstruction(CallFrame *&frame)
     case OP_POP:
         pop();
         break;
-
+    case OP_NOT:
+    {
+        Value v = pop();
+        push(Value::makeBool(!isTruthy(v)));
+        break;
+    }
     case OP_ADD:
     {
         Value b = pop();
@@ -771,8 +834,7 @@ bool VM::executeInstruction(CallFrame *&frame)
         // String concatenation
         if (a.isString() && b.isString())
         {
-            std::string result = std::string(a.asString()) + std::string(b.asString());
-
+            const char *result = StringPool::instance().concat(a.asString(), b.asString());
             push(Value::makeString(result));
         }
         // Int + Int = Int
@@ -897,6 +959,21 @@ bool VM::executeInstruction(CallFrame *&frame)
         }
         break;
     }
+    case OP_MODULO:
+    {
+        Value b = pop();
+        Value a = pop();
+        if (a.isInt() && b.isInt())
+        {
+            push(Value::makeInt(a.asInt() % b.asInt()));
+        }
+        else
+        {
+            runtimeError("Operands must be integers");
+            return false;
+        }
+        break;
+    }
 
     case OP_NEGATE:
     {
@@ -940,7 +1017,7 @@ bool VM::executeInstruction(CallFrame *&frame)
         }
         else if (a.isString())
         {
-            push(Value::makeBool(a.as.stringPtr == b.as.stringPtr));
+            push(Value::makeBool(a.asString() == b.asString()));
         }
         else if (a.isDouble())
         {
@@ -972,7 +1049,7 @@ bool VM::executeInstruction(CallFrame *&frame)
         }
         else if (a.isString())
         {
-            push(Value::makeBool(a.as.stringPtr != b.as.stringPtr));
+            push(Value::makeBool(a.asString() != b.asString()));
         }
         else if (a.isDouble())
         {
@@ -1122,54 +1199,47 @@ bool VM::executeInstruction(CallFrame *&frame)
         break;
     }
 
-    case OP_GET_GLOBAL:
+    case OP_DEFINE_GLOBAL:
     {
-        uint32_t nameId = READ_CONSTANT().asInt();
+        const char *name = READ_STRING_PTR();
+        Value value = pop();
 
-        if (nameId >= globals_.size() || globals_[nameId].type == VAL_NULL)
+        // Fast lookup using pointer hash
+        if (globals_.count(name))
         {
-            runtimeError("Undefined variable '%s'",
-                         StringPool::instance().getString(nameId));
+            runtimeError("Variable '%s' already defined", name);
             return false;
         }
 
-        push(globals_[nameId]);
+        globals_[name] = value;
+        break;
+    }
+
+    case OP_GET_GLOBAL:
+    {
+        const char *name = READ_STRING_PTR();
+        if (!globals_.count(name))
+        {
+            runtimeError("Undefined variable '%s'", name);
+            return false;
+        }
+
+        push(globals_[name]);
+
         break;
     }
 
     case OP_SET_GLOBAL:
     {
-        uint32_t nameId = READ_CONSTANT().asInt();
+        const char *name = READ_STRING_PTR();
 
-        if (nameId >= globals_.size() || globals_[nameId].type == VAL_NULL)
+        if (!globals_.count(name))
         {
-            runtimeError("Undefined variable '%s'",
-                         StringPool::instance().getString(nameId));
+            runtimeError("Undefined variable '%s'", name);
             return false;
         }
 
-        globals_[nameId] = peek(0);
-        break;
-    }
-
-    case OP_DEFINE_GLOBAL:
-    {
-        uint32_t nameId = READ_CONSTANT().asInt();
-        Value value = pop();
-
-        if (nameId >= globals_.size())
-        {
-            globals_.resize(nameId + 1, Value::makeNull());
-        }
-
-        if (globals_[nameId].type != VAL_NULL)
-        {
-            runtimeError("Variable '%s' already defined",
-                         StringPool::instance().getString(nameId));
-            return false;
-        }
-
-        globals_[nameId] = value;
+        globals_[name] = peek(0);
         break;
     }
 
@@ -1199,60 +1269,94 @@ bool VM::executeInstruction(CallFrame *&frame)
 
     case OP_CALL_NATIVE:
     {
-        std::string name = READ_STRING();
+        const char *name = READ_STRING_PTR();
         uint8_t argCount = READ_BYTE();
 
         if (!callNative(name, argCount))
         {
             return false;
         }
+
         break;
     }
-
     case OP_CALL:
     {
-        uint16_t funcIdx = READ_SHORT(); 
         uint8_t argCount = READ_BYTE();
-
-        // Valida índice
-        if (funcIdx >= functions_.size())
+        const Value &funcVal = peek(argCount);
+        if (!funcVal.isFunction())
+        {
+            runtimeError("Attempt to call a non-function value (type: %s)",
+                         TypeName(funcVal.type));
+            return false;
+        }
+        uint16_t funcIdx = funcVal.asFunctionIdx();
+        Function *function = getFunction(funcIdx);
+        if (!function)
         {
             runtimeError("Invalid function index: %d", funcIdx);
             return false;
         }
-
-        Function *function = functions_[funcIdx];  
-
+        // Remove função da stack (shift args para baixo)
+        Value *funcSlot = stackTop_ - argCount - 1;
+        for (Value *p = funcSlot; p < stackTop_ - 1; p++)
+            *p = *(p + 1);
+        stackTop_--;
+        // Faz a call
         if (!callFunction(function, argCount))
-        {
             return false;
-        }
-
+        // Atualiza frame pointer
         frame = &frames_[frameCount_ - 1];
         break;
     }
 
     case OP_RETURN:
     {
+        //DumpStack();
         Value result = pop();
+        Value *resultSlot = frame->slots;
         frameCount_--;
 
         if (frameCount_ == 0)
         {
-            // Fim completo do script
+            //printf("=== Script finished ===\n");
+
+            // Script principal terminou
             stackTop_ = stack_;
-            push(result);
+            push(result); // Resultado fica na stack para quem chamar Pop()
         }
         else
         {
-            // Retornou de uma função, continua execução
-            stackTop_ = frame->slots;
+            // Retornou de função
+            stackTop_ = resultSlot;
             push(result);
+
+            //printf("DEBUG: Returning value: ");
+            //printValue(result);
+            //printf("\n");
+            //DumpStack();  // See stack after return
             frame = &frames_[frameCount_ - 1];
         }
         break;
     }
+    case OP_RETURN_NIL:
 
+    {
+        Value *resultSlot = frame->slots; // Save BEFORE decrementing
+
+        frameCount_--;
+        if (frameCount_ == 0)
+        {
+            stackTop_ = stack_;
+            push(Value::makeNull());
+        }
+        else
+        {
+            stackTop_ = resultSlot; // Use saved value
+            push(Value::makeNull());
+            frame = &frames_[frameCount_ - 1];
+        }
+        break;
+    }
     default:
         runtimeError("Unknown opcode: %d", instruction);
         return false;
@@ -1262,6 +1366,7 @@ bool VM::executeInstruction(CallFrame *&frame)
 #undef READ_SHORT
 #undef READ_CONSTANT
 #undef READ_STRING
+#undef READ_STRING_PTR
 
     return true;
 }

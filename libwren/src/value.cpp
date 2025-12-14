@@ -1,14 +1,15 @@
 #include "value.h"
 #include "stringpool.h"
 #include <cstdio>
+#include "value.h"
+#include <cstdio>
 
 Value::Value() : type(VAL_NULL)
 {
     as.integer = 0;
 }
 
-
- 
+    
 
 Value Value::makeNull()
 {
@@ -51,17 +52,17 @@ Value Value::makeFloat(float f)
 
 Value Value::makeString(const char *str)
 {
-   Value v;
-        v.type = VAL_STRING;
-        v.as.stringPtr = StringPool::instance().intern(str);
-        return v;
+    Value v;
+    v.type = VAL_STRING;
+    v.as.string  = StringPool::instance().intern(str);
+    return v;
 }
 
 Value Value::makeString(const std::string &str)
 {
     Value v;
     v.type = VAL_STRING;
-    v.as.stringPtr = StringPool::instance().intern(str);
+    v.as.string = StringPool::instance().intern(str);
     return v;
 }
 
@@ -73,11 +74,13 @@ Value Value::makeFunction(int idx)
     return v;
 }
 
+
+
 bool Value::asBool() const { return as.boolean; }
 int Value::asInt() const { return as.integer; }
 double Value::asDouble() const { return as.number; }
 float Value::asFloat() const { return (float)as.number; }
-const char *Value::asString() const { return as.stringPtr; }
+const char *Value::asString() const { return as.string; }
 int Value::asFunctionIdx() const { return as.functionIdx; }
 
 void printValue(const Value &value)
@@ -98,10 +101,9 @@ std::string valueToString(const Value &value)
     case VAL_DOUBLE:
         return std::to_string(value.as.number);
     case VAL_STRING:
-        return std::string(value.as.stringPtr);
+        return value.as.string;
     case VAL_FUNCTION:
         return "<fn>";
-
     }
     return "<?>";
 }

@@ -6,6 +6,9 @@
 #include <unordered_map>
 #include <vector>
 
+
+class Compiler;
+
 enum class InterpretResult
 {
     OK,
@@ -23,13 +26,26 @@ public:
     ~VM();
 
     InterpretResult interpret(Function *function);
-    void registerNative(const std::string &name, int arity, NativeFunction fn);
+    InterpretResult interpret(const std::string& source);
+
+    
+    InterpretResult interpretExpression(const std::string& source);
+
+    void registerNative(const char* name, int arity, NativeFunction fn);
+
+    
+    
+    Function *compileExpression(const std::string &source);
+    Function *compile(const std::string &source);
 
     Value *getStackTop() { return stackTop_; }
     uint16_t registerFunction(const std::string &name, Function *func);
+    bool canRegisterFunction(const std::string &name);
 
- 
-    uint32_t internGlobalName(const std::string& name) ;
+    const std::unordered_map<const char*, Value> &getGlobals() const
+    {
+        return globals_;
+    }
 
     Function *getFunction(const char *name);
     Function *getFunction(uint16_t index);
@@ -81,6 +97,7 @@ public:
     const char *TypeName(ValueType type);
 
 private:
+    Compiler* compiler;
     Value stack_[STACK_MAX];
     Value *stackTop_;
     
@@ -88,12 +105,10 @@ private:
     int frameCount_;
     bool hasFatalError_;
 
- 
-    std::vector<Value> globals_;
- 
+    std::unordered_map<const char*, Value> globals_;
 
     std::vector<Function *> functions_;
-    std::unordered_map<std::string, uint16_t> functionNames_;
+    std::unordered_map<const char*, uint16_t> functionNames_;
 
     NativeRegistry natives_;
 
@@ -107,7 +122,7 @@ private:
     Value pop();
     const Value& peek(int distance);
 
-    bool callNative(const std::string &name, int argCount);
+    bool callNative(const char* name, int argCount);
     bool callFunction(Function *function, int argCount);
 
     void runtimeError(const char *format, ...);

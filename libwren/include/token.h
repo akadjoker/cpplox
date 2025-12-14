@@ -55,13 +55,20 @@ enum TokenType
     TOKEN_COMMA,
     TOKEN_SEMICOLON,
 
+    TOKEN_PLUS_EQUAL,    // +=
+    TOKEN_MINUS_EQUAL,   // -=
+    TOKEN_STAR_EQUAL,    // *=
+    TOKEN_SLASH_EQUAL,   // /=
+    TOKEN_PERCENT_EQUAL, // %=
+
     // Built-ins
     TOKEN_PRINT,
     TOKEN_TYPE,
 
     // Special
     TOKEN_EOF,
-    TOKEN_ERROR
+    TOKEN_ERROR,
+    TOKEN_COUNT
 };
 
 struct Token
@@ -69,7 +76,6 @@ struct Token
     TokenType type;
     std::string lexeme;
 
- 
     int line;   // Linha (1-indexed)
     int column; // Coluna (1-indexed)
 
@@ -77,10 +83,8 @@ struct Token
 
     Token(TokenType t, const std::string &lex, int l, int c);
 
- 
     std::string toString() const;
     std::string locationString() const; // "line 5, column 12"
 };
 
- 
 const char *tokenTypeToString(TokenType type);
