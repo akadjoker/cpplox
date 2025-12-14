@@ -1,19 +1,23 @@
 #include "native.h"
 #include "vm.h"
+#include "stringpool.h"
 #include <cstdio>
 #include <cmath>
 #include <ctime>
 #include <chrono>
 #include <cstring>
 
-void NativeRegistry::registerFunction(const std::string &name, int arity, NativeFunction fn)
+uint16_t NativeRegistry::registerFunction(const char* name, int arity, NativeFunction fn)
 {
     functions_.emplace(name, NativeFn(name, arity, fn));
+    builtins_.emplace_back(name, arity, fn);
+    return builtins_.size() - 1;   
 }
 
 NativeFn *NativeRegistry::getFunction(const std::string &name)
 {
-    auto it = functions_.find(name);
+    const char *internedName = StringPool::instance().intern(name);
+    auto it = functions_.find(internedName);
     if (it != functions_.end())
     {
         return &it->second;
@@ -21,9 +25,19 @@ NativeFn *NativeRegistry::getFunction(const std::string &name)
     return nullptr;
 }
 
-bool NativeRegistry::hasFunction(const std::string &name) const
+NativeFn *NativeRegistry::getFunction(uint16_t index)
 {
-    return functions_.find(name) != functions_.end();
+    if (index < builtins_.size())
+    {
+        return &builtins_[index];
+    }
+    return nullptr;
+}
+
+bool NativeRegistry::hasFunction(const char* name) const
+{
+    const char *internedName = StringPool::instance().intern(name);
+    return functions_.find(internedName) != functions_.end();
 }
 
 // Built-in functions
@@ -154,13 +168,13 @@ static Value nativeLen(VM *vm, int argCount, Value *args)
     return Value::makeInt(strlen(args[0].asString()));
 }
 
-void NativeRegistry::registerBuiltins()
+void NativeRegistry::registerBuiltins(VM *vm)
 {
-    registerFunction("clock", 0, nativeClock);
-    registerFunction("print", -1, nativePrint);
-    registerFunction("sqrt", 1, nativeSqrt);
-    registerFunction("abs", 1, nativeAbs);
-    registerFunction("pow", 2, nativePow);
-    registerFunction("str", 1, nativeStr);
-    registerFunction("len", 1, nativeLen);
+     vm->registerNative("clock", 0, nativeClock);
+    //vm->registerNative("print", -1, nativePrint);
+    // vm->registerNative("sqrt", 1, nativeSqrt);
+    // vm->registerNative("abs", 1, nativeAbs);
+    // vm->registerNative("pow", 2, nativePow);
+    // vm->registerNative("str", 1, nativeStr);
+    // vm->registerNative("len", 1, nativeLen);
 }

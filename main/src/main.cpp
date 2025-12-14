@@ -1,9 +1,10 @@
 #include "vm.h"
+#include "process_manager.h"
 #include <iostream>
 #include <string>
 #include <sstream>
-#include <fstream>     
-#include <cstdlib>      
+#include <fstream>
+#include <cstdlib>
 
 // class REPL
 // {
@@ -163,13 +164,8 @@
 //         if (code.empty())
 //             return;
 
-      
-
- 
 //                vm_.interpret(code);
 
-        
- 
 //     }
 
 //     bool needsMultiline(const std::string &line)
@@ -213,12 +209,32 @@ int main(int argc, char **argv)
 {
     // if (argc > 1)
     // {
-        // Modo script
-        VM vm;
-        std::ifstream file("main.cc");
-        std::string code((std::istreambuf_iterator<char>(file)),
-                         std::istreambuf_iterator<char>());
-        vm.interpret(code);
+    // Modo script
+    VM vm;
+    std::ifstream file("main.cc");
+    std::string code((std::istreambuf_iterator<char>(file)),
+                     std::istreambuf_iterator<char>());
+    vm.interpret(code);
+
+    ProcessManager procMgr;
+
+    // uint16_t funcId = vm.getFunctionId("enemy");
+    // printf("Func id: %d\n", funcId);
+
+    // procMgr.spawn(funcId, 0, 0);
+
+    // funcId = vm.getFunctionId("player");
+    // printf("Func id: %d\n", funcId);
+
+    // procMgr.spawn(funcId, 1, 0);
+
+    // for (int i = 0; i < 5; i++)
+    // {
+    //     printf("\n=== FRAME %d ===\n", i);
+    //     procMgr.update(&vm);
+    //     printf("Processos ativos: %d\n", procMgr.count());
+    // }
+
     // }
     // else
     // {

@@ -2,6 +2,7 @@
 #include "value.h"
 #include <functional>
 #include <string>
+#include <vector>
 #include <unordered_map>
 
 class VM;
@@ -21,11 +22,14 @@ struct NativeFn
 class NativeRegistry
 {
 public:
-    void registerFunction(const std::string &name, int arity, NativeFunction fn);
+    uint16_t registerFunction(const char* name, int arity, NativeFunction fn);
     NativeFn *getFunction(const std::string &name);
-    bool hasFunction(const std::string &name) const;
-    void registerBuiltins();
+    NativeFn *getFunction(uint16_t index);
+
+    bool hasFunction(const char* name) const;
+    void registerBuiltins(VM *vm);
 
 private:
     std::unordered_map<std::string, NativeFn> functions_;
+    std::vector<NativeFn> builtins_;
 };

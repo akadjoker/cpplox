@@ -50,6 +50,9 @@ void Lexer::initKeywords()
         {"nil", TOKEN_NIL},
         {"print", TOKEN_PRINT},
         {"type", TOKEN_TYPE},
+        {"process", TOKEN_PROCESS},
+        {"frame", TOKEN_FRAME},
+        {"exit", TOKEN_EXIT},
     };
 }
 

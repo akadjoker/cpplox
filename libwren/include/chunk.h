@@ -25,6 +25,7 @@ struct Function
     Chunk chunk;
     std::string name;
     bool hasReturn;
+     bool isProcess; 
 
     Function(const std::string &n = "<script>", int a = 0);
 };

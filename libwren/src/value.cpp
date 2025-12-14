@@ -74,7 +74,21 @@ Value Value::makeFunction(int idx)
     return v;
 }
 
+Value Value::makeNative(int idx)
+{ 
+    Value v;
+    v.type = VAL_NATIVE;
+    v.as.nativeIdx = idx;
+    return v;
+}
 
+Value Value::makeProcess(int idx)
+{
+    Value v;
+    v.type = VAL_PROCESS;
+    v.as.processIdx = idx;
+    return v;
+}
 
 bool Value::asBool() const { return as.boolean; }
 int Value::asInt() const { return as.integer; }
@@ -82,10 +96,12 @@ double Value::asDouble() const { return as.number; }
 float Value::asFloat() const { return (float)as.number; }
 const char *Value::asString() const { return as.string; }
 int Value::asFunctionIdx() const { return as.functionIdx; }
+int Value::asNativeIdx() const { return as.nativeIdx; }
+int Value::asProcessIdx() const { return as.processIdx; }
 
 void printValue(const Value &value)
 {
-    printf("%s", valueToString(value).c_str());
+    printf("%s\n", valueToString(value).c_str());
 }
 
 std::string valueToString(const Value &value)
@@ -103,7 +119,11 @@ std::string valueToString(const Value &value)
     case VAL_STRING:
         return value.as.string;
     case VAL_FUNCTION:
-        return "<fn>";
+        return "<function>";
+    case VAL_NATIVE:
+        return "<native>";
+    case VAL_PROCESS:
+        return "<process>";
     }
     return "<?>";
 }

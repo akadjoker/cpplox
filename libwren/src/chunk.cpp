@@ -30,4 +30,4 @@ int Chunk::addConstant(Value value)
 }
 
 Function::Function(const std::string &n, int a)
-    : arity(a), name(n), hasReturn(false) {}
+    : arity(a), name(n), hasReturn(false),isProcess(false)  {}

@@ -2,6 +2,8 @@
 #include "stringpool.h"
 #include "table.h"
 #include "compiler.h"
+#include "process.h"
+#include "process_manager.h"
 #include <cstdio>
 #include <cstdarg>
 
@@ -10,14 +12,24 @@ CallFrame::CallFrame()
 
 VM::VM() : stackTop_(stack_), frameCount_(0), hasFatalError_(false)
 {
-    natives_.registerBuiltins();
     compiler = new Compiler(this);
     globals_ = new Table();
+    currentProcess_ = nullptr;
+    processManager_ = new ProcessManager();
+
+    global_cache_.invalidate();
+    natives_.registerBuiltins(this);
+
+
+    globals_->define("PI", Value::makeDouble(3.141592653589793));
+
+  
 }
 
 VM::~VM()
 {
 
+    delete processManager_;
     delete globals_;
     delete compiler;
     StringPool::instance().clear();
@@ -95,15 +107,36 @@ void VM::resetStack()
 
 void VM::registerNative(const char *name, int arity, NativeFunction fn)
 {
+     
+
+    // if (natives_.hasFunction(internedName))
+    // {
+    //     runtimeError("Native function '%s' already registered", name);
+    //     return;
+    // }
+
+    uint16_t func = natives_.registerFunction(name, arity, fn);
+    // if (!globals_->define(name, std::move(Value::makeNative(func))))
+    // {
+    //     runtimeError("Native function '%s' already registered", name);
+    // }
+    // else
+    // {
+
+    //    // printf("Registering native function '%s' at index %d\n", name, func);
+    // }
+}
+
+uint16_t VM::getFunctionId(const char *name)
+{
     const char *internedName = StringPool::instance().intern(name);
-
-    if (natives_.hasFunction(internedName))
+    auto it = functionNames_.find(internedName);
+    if (it != functionNames_.end())
     {
-        runtimeError("Native function '%s' already registered", internedName);
-        return;
+        return it->second;
     }
-
-    natives_.registerFunction(internedName, arity, fn);
+    printf("Undefined function '%s'\n", internedName);
+    return 0;
 }
 
 bool VM::callNative(const char *name, int argCount)
@@ -149,6 +182,11 @@ bool VM::callFunction(Function *function, int argCount)
         return false;
     }
 
+    if (function->isProcess)
+    {
+        return true;
+    }
+
     // Cria novo frame
     CallFrame *frame = &frames_[frameCount_++];
     frame->function = function;
@@ -173,6 +211,8 @@ InterpretResult VM::interpret(Function *function)
 
 InterpretResult VM::interpret(const std::string &source)
 {
+    
+
     Function *function = compiler->compile(source, this);
     if (!function)
     {
@@ -1217,7 +1257,8 @@ bool VM::executeInstruction(CallFrame *&frame)
             return false;
         }
 
-        // ✅ Invalida cache (nova variável pode ter mudado índices)
+
+
         global_cache_.invalidate();
 
         break;
@@ -1227,12 +1268,14 @@ bool VM::executeInstruction(CallFrame *&frame)
     {
         const char *name = READ_STRING_PTR();
 
-        // ✅ Cache hit? (comparação de pointers!)
-        if (global_cache_.name == name)
-        {
-            push(*global_cache_.value_ptr);
-            break;
-        }
+        
+
+     
+        // if (global_cache_.name == name)
+        // {
+        //     push(*global_cache_.value_ptr);
+        //     break;
+        // }
 
         // Cache miss - lookup normal
         Value *value = globals_->get_ptr(name);
@@ -1242,9 +1285,11 @@ bool VM::executeInstruction(CallFrame *&frame)
             return false;
         }
 
-        // ✅ Atualiza cache
-        global_cache_.name = name;
-        global_cache_.value_ptr = value;
+     
+
+     
+        // global_cache_.name = name;
+        // global_cache_.value_ptr = value;
 
         push(*value);
         break;
@@ -1313,8 +1358,11 @@ bool VM::executeInstruction(CallFrame *&frame)
     }
     case OP_CALL:
     {
+        //globals_->dump();
+        //printf("CALL\n");
         uint8_t argCount = READ_BYTE();
         const Value &funcVal = peek(argCount);
+        printValue(funcVal);
         if (!funcVal.isFunction())
         {
             runtimeError("Attempt to call a non-function value (type: %s)",

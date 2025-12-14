@@ -253,6 +253,24 @@ public:
         return true;
     }
 
+    void dump()
+    {
+        for (size_t i = 0; i < array_size; ++i)
+        {
+            printValue(array[i]);
+            
+        }
+        for (size_t i = 0; i < hash_capacity; ++i)
+        {
+            if (hash_buckets[i].occupied)
+            {
+                printf("%s: ", hash_buckets[i].key);
+                printValue(hash_buckets[i].value);
+                
+            }
+        }
+    }
+
     // ========================================================================
     // CLEAR
     // ========================================================================
@@ -326,7 +344,7 @@ public:
     // DEFINE: Insere apenas se NÃO existir. Retorna true se definiu, false se já existia
     // NÃO atualiza o valor se já existir - é para definição de variáveis novas
 
-    inline bool define(const char *key_str, const Value &value)
+    inline bool define(const char *key_str,  Value value)
     {
         if (hash_capacity == 0)
             resize_hash(INITIAL_HASH_CAPACITY);
@@ -346,13 +364,13 @@ public:
             {
 
                 bucket.set_key(key_str);
-                bucket.value = value;
+                bucket.value = std::move(value);
                 bucket.occupied = true;
                 ++hash_size;
                 return true;
             }
 
-            // ✅ Usa comparação de buffer
+    
             if (bucket.key_equals(key_str))
             {
                 return false; // Já existia

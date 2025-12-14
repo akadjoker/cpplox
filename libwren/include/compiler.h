@@ -123,7 +123,7 @@ private:
   
     LoopContext loopContexts_[MAX_LOOP_DEPTH];
     int loopDepth_;
-
+    bool isProcess_;
     // Token management
     void advance();
     bool check(TokenType type);
@@ -178,7 +178,7 @@ private:
     void declaration();
     void statement();
     void varDeclaration();
-    void funDeclaration();
+    void funDeclaration(bool isProcess=false);
     void expressionStatement();
     void printStatement();
     void ifStatement();
@@ -204,13 +204,20 @@ private:
 
     uint8_t argumentList();
 
-    void compileFunction(const std::string &name);
+    void compileFunction(const std::string &name, bool isProcess=false);
+
+    bool isProcessFunction(const char* name) const ;
 
     // Scope
     void beginScope();
     void endScope();
 
+     bool inProcessFunction() const ;
+
     void initRules();
+
+    void frameStatement();
+    void exitStatement();
 
     static ParseRule rules[TOKEN_COUNT];
 };

@@ -6,9 +6,10 @@
 #include <unordered_map>
 #include <vector>
 
-
 class Compiler;
 class Table;
+struct Process;
+class ProcessManager;
 
 enum class InterpretResult
 {
@@ -27,29 +28,28 @@ public:
     ~VM();
 
     InterpretResult interpret(Function *function);
-    InterpretResult interpret(const std::string& source);
+    InterpretResult interpret(const std::string &source);
 
-    
-    InterpretResult interpretExpression(const std::string& source);
+    InterpretResult interpretExpression(const std::string &source);
 
-    void registerNative(const char* name, int arity, NativeFunction fn);
+    void registerNative(const char *name, int arity, NativeFunction fn);
 
-    
-    
+    uint16_t getFunctionId(const char *name);
+
     Function *compileExpression(const std::string &source);
     Function *compile(const std::string &source);
 
     Value *getStackTop() { return stackTop_; }
     uint16_t registerFunction(const std::string &name, Function *func);
-    bool canRegisterFunction(const std::string &name);
+    void registerProcess(const std::string &name, uint16_t index);
 
-  
+    bool canRegisterFunction(const std::string &name);
 
     Function *getFunction(const char *name);
     Function *getFunction(uint16_t index);
 
     // ===== STACK API   =====
-    const Value& Peek(int index) ; // -1 = topo, 0 = base
+    const Value &Peek(int index); // -1 = topo, 0 = base
     void Push(Value value);
     Value Pop();
 
@@ -87,56 +87,64 @@ public:
 
     // ===== FUNCTIONS =====
     void Call(int argCount, int resultCount);
-   
 
     // ===== DEBUG =====
     void DumpStack();
-    void DumpGlobals(); 
+    void DumpGlobals();
     const char *TypeName(ValueType type);
 
-    bool isNativeFunction(const char* name) const;
-    
+    bool isNativeFunction(const char *name) const;
 
 private:
     friend class Compiler;
-    Compiler* compiler;
+    friend class Process;
+    friend class ProcessManager;
+    Compiler *compiler;
     Value stack_[STACK_MAX];
     Value *stackTop_;
 
-   struct GlobalCache {
-        const char* name;
-        Value* value_ptr;
-        
+    struct GlobalCache
+    {
+        const char *name;
+        Value *value_ptr;
+
         GlobalCache() : name(nullptr), value_ptr(nullptr) {}
-        
-        void invalidate() {
+
+        void invalidate()
+        {
             name = nullptr;
             value_ptr = nullptr;
         }
     } global_cache_;
-    
+
     CallFrame frames_[FRAMES_MAX];
     int frameCount_;
     bool hasFatalError_;
 
-     Table* globals_;
+    Table *globals_;
+
+    Process *currentProcess_;
+
+    ProcessManager* processManager_;  
 
     std::vector<Function *> functions_;
-    std::unordered_map<const char*, uint16_t> functionNames_;
+    std::unordered_map<const char *, uint16_t> functionNames_;
 
     NativeRegistry natives_;
 
     bool run();
-    bool executeUntilReturn(int targetFrameCount) ;
-    bool executeInstruction(CallFrame*& frame);
+    bool executeUntilReturn(int targetFrameCount);
+    bool executeInstruction(CallFrame *&frame);
 
     bool isTruthy(const Value &value);
 
+    bool executeProcess(Process *process);
+
     void push(Value value);
     Value pop();
-    const Value& peek(int distance);
+    const Value &peek(int distance);
 
-    bool callNative(const char* name, int argCount);
+    bool callNative(const char *name, int argCount);
     bool callFunction(Function *function, int argCount);
 
     void runtimeError(const char *format, ...);

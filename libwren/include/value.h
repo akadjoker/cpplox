@@ -10,7 +10,9 @@ enum ValueType
     VAL_INT,
     VAL_DOUBLE,
     VAL_STRING,
-    VAL_FUNCTION
+    VAL_FUNCTION,
+    VAL_NATIVE,
+    VAL_PROCESS,
 };
 
 struct Value
@@ -24,6 +26,9 @@ struct Value
         double number;
         const char *string;
         int functionIdx;
+        int nativeIdx;
+        int processIdx;
+
     } as;
 
     // Constructors
@@ -47,6 +52,8 @@ struct Value
     static Value makeString(const char *str);
     static Value makeString(const std::string &str);
     static Value makeFunction(int idx);
+    static Value makeNative(int idx);
+    static Value makeProcess(int idx);
 
     // Type checks
     bool isNull() const { return type == VAL_NULL; }
@@ -55,6 +62,8 @@ struct Value
     bool isDouble() const { return type == VAL_DOUBLE; }
     bool isString() const { return type == VAL_STRING; }
     bool isFunction() const { return type == VAL_FUNCTION; }
+    bool isNative() const { return type == VAL_NATIVE; }
+    bool isProcess() const { return type == VAL_PROCESS; }
 
     // Conversions
     bool asBool() const;
@@ -63,6 +72,8 @@ struct Value
     float asFloat() const;
     const char *asString() const;
     int asFunctionIdx() const;
+    int asNativeIdx() const;
+    int asProcessIdx() const;
 };
 
 void printValue(const Value &value);

@@ -20,7 +20,7 @@ ParseRule Compiler::rules[TOKEN_COUNT];
 
 Compiler::Compiler(VM *vm)
     : vm_(vm), lexer(nullptr), function(nullptr), currentChunk(nullptr),
-      hadError(false), panicMode(false), scopeDepth(0), localCount_(0), loopDepth_(0) 
+      hadError(false), panicMode(false), scopeDepth(0), localCount_(0), loopDepth_(0), isProcess_(false)
 {
 
     initRules();
@@ -384,6 +384,11 @@ void Compiler::parsePrecedence(Precedence precedence)
     {
         advance();
         ParseFn infixRule = getRule(previous.type)->infix;
+        
+        if (infixRule == nullptr)
+        {
+            break;
+        }
         (this->*infixRule)(canAssign);
     }
 
@@ -527,7 +532,11 @@ void Compiler::declaration()
     }
     else if (match(TOKEN_DEF))
     {
-        funDeclaration();
+        funDeclaration(false);
+    }
+    else if (match(TOKEN_PROCESS))
+    {
+        funDeclaration(true);
     }
     else
     {
@@ -540,7 +549,15 @@ void Compiler::declaration()
 
 void Compiler::statement()
 {
-    if (match(TOKEN_PRINT))
+    if (match(TOKEN_FRAME))
+    {
+        frameStatement();
+    }
+    else if (match(TOKEN_EXIT))
+    {
+        exitStatement();
+    }
+    else if (match(TOKEN_PRINT))
     {
         printStatement();
     }
@@ -640,20 +657,20 @@ void Compiler::variable(bool canAssign)
 {
     Token name = previous;
 
-    if (check(TOKEN_LPAREN))
-    {
-        const char *interned = StringPool::instance().intern(name.lexeme);
+    // if (check(TOKEN_LPAREN))
+    // {
+    //     const char *interned = StringPool::instance().intern(name.lexeme);
 
-        if (vm_->natives_.hasFunction(interned))
-        {
-            advance(); // Consome '('
-            uint8_t argCount = argumentList();
-            uint8_t nameIdx = makeConstant(Value::makeString(interned));
-            emitBytes(OP_CALL_NATIVE, nameIdx);
-            emitByte(argCount);
-            return;
-        }
-    }
+    //     if (vm_->natives_.hasFunction(interned))
+    //     {
+    //         advance(); // Consome '('
+    //         uint8_t argCount = argumentList();
+    //         uint8_t nameIdx = makeConstant(Value::makeString(interned));
+    //         emitBytes(OP_CALL_NATIVE, nameIdx);
+    //         emitByte(argCount);
+    //         return;
+    //     }
+    // }
 
     namedVariable(name, canAssign);
 }
@@ -687,6 +704,10 @@ uint8_t Compiler::identifierConstant(Token &name)
 
 void Compiler::namedVariable(Token &name, bool canAssign)
 {
+
+
+    const char *interned = StringPool::instance().intern(name.lexeme);
+
     uint8_t getOp, setOp;
     int arg = resolveLocal(name);
 
@@ -765,7 +786,8 @@ void Compiler::namedVariable(Token &name, bool canAssign)
     }
     else
     {
-        // Leitura normal
+     
+         printf("namedVariable\n");   // Leitura normal
         emitBytes(getOp, (uint8_t)arg);
     }
 }
@@ -879,6 +901,11 @@ void Compiler::endScope()
         emitByte(OP_POP);
         localCount_--;
     }
+}
+
+bool Compiler::inProcessFunction() const
+{
+    return function && function->isProcess;
 }
 
 void Compiler::block()
@@ -1024,7 +1051,7 @@ void Compiler::emitBreak()
         localCount_--;
     }
 
-    if(!ctx.addBreak(emitJump(OP_JUMP)))
+    if (!ctx.addBreak(emitJump(OP_JUMP)))
     {
         error("Too many breaks");
     }
@@ -1139,7 +1166,7 @@ void Compiler::switchStatement()
         temp.lexeme = "__switch_temp__";
         addLocal(temp);
         markInitialized();
- 
+
         switchValueSlot = localCount_ - 1;
 
         emitBytes(OP_SET_LOCAL, (uint8_t)switchValueSlot);
@@ -1397,7 +1424,7 @@ void Compiler::call(bool canAssign)
     emitByte(argCount);
 }
 
-void Compiler::funDeclaration()
+void Compiler::funDeclaration(bool isProcess)
 {
     // 1. Parse nome
     consume(TOKEN_IDENTIFIER, "Expect function name");
@@ -1419,12 +1446,12 @@ void Compiler::funDeclaration()
     }
 
     // 3. Compile a função
-    compileFunction(nameToken.lexeme);
+    compileFunction(nameToken.lexeme, isProcess);
 
     // 4. Define variable
     defineVariable(nameConstant);
 }
-void Compiler::compileFunction(const std::string &name)
+void Compiler::compileFunction(const std::string &name, bool isProcess)
 {
     if (!vm_->canRegisterFunction(name))
     {
@@ -1433,6 +1460,7 @@ void Compiler::compileFunction(const std::string &name)
     }
 
     Function *function = new Function(name, 0);
+    function->isProcess = isProcess;
     uint16_t idx = vm_->registerFunction(name, function);
 
     // Salvar estado do compiler atual
@@ -1444,12 +1472,14 @@ void Compiler::compileFunction(const std::string &name)
     int enclosingLocalCount = this->localCount_;
     std::memcpy(enclosingLocals, locals_, sizeof(Local) * localCount_);
 
+    bool wasInProcess = this->isProcess_;
+
     // Mudar para compilar a função
     this->function = function;
     this->currentChunk = &function->chunk;
     this->scopeDepth = 0;
-
     this->localCount_ = 0;
+    this->isProcess_ = isProcess;
 
     function->hasReturn = false;
 
@@ -1482,9 +1512,17 @@ void Compiler::compileFunction(const std::string &name)
     consume(TOKEN_LBRACE, "Expect '{' before function body");
     block();
 
-    if (!function->hasReturn)
+    if (isProcess)
     {
-        emitReturn();
+        printf("Compiling process %s\n", name.c_str());
+        emitByte(OP_END_PROCESS);
+    }
+    else
+    {
+        if (!function->hasReturn)
+        {
+            emitReturn();
+        }
     }
 
     // Restaurar estado do compiler
@@ -1496,6 +1534,16 @@ void Compiler::compileFunction(const std::string &name)
     std::memcpy(locals_, enclosingLocals, sizeof(Local) * localCount_);
 
     emitBytes(OP_CONSTANT, makeConstant(Value::makeFunction(idx)));
+}
+
+bool Compiler::isProcessFunction(const char *name) const
+{
+    uint16_t funcId = vm_->getFunctionId(name);
+    if (funcId == (uint16_t)-1)
+        return false;
+
+    Function *func = vm_->functions_[funcId];
+    return func && func->isProcess;
 }
 
 void Compiler::prefixIncrement(bool canAssign)
@@ -1571,4 +1619,61 @@ void Compiler::prefixDecrement(bool canAssign)
     emitBytes(setOp, (uint8_t)arg);
 
     emitBytes(getOp, (uint8_t)arg);
+}
+
+void Compiler::frameStatement()
+{
+    emitByte(OP_FRAME);
+
+    if (match(TOKEN_LPAREN))
+    {
+        // frame(expression)
+        expression(); // Percentagem vai para stack
+        consume(TOKEN_RPAREN, "Expect ')' after percentage");
+    }
+    else
+    {
+        // frame; = frame(100);
+        emitBytes(OP_CONSTANT, makeConstant(Value::makeInt(100)));
+    }
+
+    consume(TOKEN_SEMICOLON, "Expect ';' after frame");
+}
+
+void Compiler::exitStatement()
+{
+    if (!inProcessFunction())
+    {
+        error("'exit' can only be used in process");
+        return;
+    }
+
+    int exit_code = 0;
+
+    if (match(TOKEN_LPAREN))
+    {
+        // exit(1)
+        expression(); // Exit code no stack
+        consume(TOKEN_RPAREN, "Expect ')' after exit code");
+
+        // Pop exit code
+        // (se for constante, otimiza)
+    }
+    else
+    {
+        // exit; = exit(0);
+        exit_code = 0;
+    }
+
+    consume(TOKEN_SEMICOLON, "Expect ';' after exit");
+
+    // Limpa locals
+    while (localCount_ > 0 && locals_[localCount_ - 1].depth > 0)
+    {
+        emitByte(OP_POP);
+        localCount_--;
+    }
+
+    emitByte(OP_END_PROCESS);
+    emitByte((uint8_t)exit_code);
 }

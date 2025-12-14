@@ -78,6 +78,10 @@ enum TokenType
     TOKEN_PRINT,
     TOKEN_TYPE,
 
+    TOKEN_PROCESS,
+    TOKEN_FRAME,
+    TOKEN_EXIT,
+
     // Special
     TOKEN_EOF,
     TOKEN_ERROR,

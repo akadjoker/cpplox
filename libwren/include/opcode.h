@@ -51,6 +51,10 @@ enum Opcode : uint8_t
     OP_RETURN,
     OP_RETURN_NIL,
 
+    OP_FRAME,
+    OP_END_PROCESS,
+    OP_SPAWN,
+
     // I/O
     OP_PRINT,
 };
