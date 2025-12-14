@@ -55,11 +55,16 @@ enum TokenType
     TOKEN_COMMA,
     TOKEN_SEMICOLON,
 
-    TOKEN_PLUS_EQUAL,    // +=
-    TOKEN_MINUS_EQUAL,   // -=
-    TOKEN_STAR_EQUAL,    // *=
-    TOKEN_SLASH_EQUAL,   // /=
-    TOKEN_PERCENT_EQUAL, // %=
+ // Compound assignment
+    TOKEN_PLUS_EQUAL,      // +=
+    TOKEN_MINUS_EQUAL,     // -=
+    TOKEN_STAR_EQUAL,      // *=
+    TOKEN_SLASH_EQUAL,     // /=
+    TOKEN_PERCENT_EQUAL,   // %=
+    
+    // Increment/Decrement
+    TOKEN_PLUS_PLUS,       // ++
+    TOKEN_MINUS_MINUS,     // --
 
     // Built-ins
     TOKEN_PRINT,
