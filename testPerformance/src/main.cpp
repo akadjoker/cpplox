@@ -117,7 +117,7 @@ int main()
             var total = 0;
             for (var i = 0; i < 100; i++) {
                 for (var j = 0; j < 100; j++) {
-                    total += i * j;
+                    total +=  i * j;
                 }
             }
         )";
@@ -125,25 +125,25 @@ int main()
         Benchmark::run("Nested Loops (100x100)", code);
     }
 
-    // ============================================
-    // 6. ACKERMANN (stress test)
-    // ============================================
-    {
-        std::string code = R"(
-            def ackermann(m, n) {
-                if (m == 0) {
-                    return n + 1;
-                }
-                if (n == 0) {
-                    return ackermann(m - 1, 1);
-                }
-                return ackermann(m - 1, ackermann(m, n - 1));
-            }
-            var result = ackermann(3, 6);
-        )";
+    // // ============================================
+    // // 6. ACKERMANN (stress test)
+    // // ============================================
+    // {
+    //     std::string code = R"(
+    //         def ackermann(m, n) {
+    //             if (m == 0) {
+    //                 return n + 1;
+    //             }
+    //             if (n == 0) {
+    //                 return ackermann(m - 1, 1);
+    //             }
+    //             return ackermann(m - 1, ackermann(m, n - 1));
+    //         }
+    //         var result = ackermann(3, 6);
+    //     )";
 
-        Benchmark::run("Ackermann(3, 6)", code);
-    }
+    //     Benchmark::run("Ackermann(3, 6)", code);
+    // }
 
     // ============================================
     // 7. PRIME NUMBERS

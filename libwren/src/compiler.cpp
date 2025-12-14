@@ -20,11 +20,10 @@ ParseRule Compiler::rules[TOKEN_COUNT];
 
 Compiler::Compiler(VM *vm)
     : vm_(vm), lexer(nullptr), function(nullptr), currentChunk(nullptr),
-      hadError(false), panicMode(false), scopeDepth(0)
+      hadError(false), panicMode(false), scopeDepth(0), localCount_(0)
 {
 
     initRules();
-    locals.reserve(256);
 }
 Compiler::~Compiler()
 {
@@ -168,7 +167,7 @@ void Compiler::clear()
     hadError = false;
     panicMode = false;
     scopeDepth = 0;
-    locals.clear();
+    localCount_ = 0;
 }
 
 // ============================================
@@ -639,23 +638,22 @@ void Compiler::varDeclaration()
 void Compiler::variable(bool canAssign)
 {
     Token name = previous;
-    
-    if (check(TOKEN_LPAREN)) 
+
+    if (check(TOKEN_LPAREN))
     {
-        const char* interned = StringPool::instance().intern(name.lexeme);
-        
-        if (vm_->natives_.hasFunction(interned)) 
+        const char *interned = StringPool::instance().intern(name.lexeme);
+
+        if (vm_->natives_.hasFunction(interned))
         {
-            advance();  // Consome '('
-            uint8_t argCount = argumentList();        
+            advance(); // Consome '('
+            uint8_t argCount = argumentList();
             uint8_t nameIdx = makeConstant(Value::makeString(interned));
             emitBytes(OP_CALL_NATIVE, nameIdx);
             emitByte(argCount);
-            return;  
+            return;
         }
     }
-    
- 
+
     namedVariable(name, canAssign);
 }
 
@@ -786,20 +784,20 @@ void Compiler::defineVariable(uint8_t global)
 void Compiler::declareVariable()
 {
     if (scopeDepth == 0)
-        return; // Global
+        return;
 
     Token &name = previous;
 
-    // Check for duplicate in current scope
-    for (int i = locals.size() - 1; i >= 0; i--)
+    for (int i = localCount_ - 1; i >= 0; i--)
     {
-        Local &local = locals[i];
+        Local &local = locals_[i];
+
         if (local.depth != -1 && local.depth < scopeDepth)
         {
-            break; // Left current scope
+            break;
         }
 
-        if (name.lexeme == local.name)
+        if (local.equals(name.lexeme))
         {
             error("Variable with this name already declared in this scope");
         }
@@ -810,38 +808,55 @@ void Compiler::declareVariable()
 
 void Compiler::addLocal(Token &name)
 {
-    if (locals.size() >= UINT8_MAX)
+    if (localCount_ >= MAX_LOCALS)
     {
         error("Too many local variables in function");
         return;
     }
 
-    locals.emplace_back(name.lexeme, -1); // -1 = uninitialized
+    size_t len = name.lexeme.length();
+
+    if (len >= MAX_IDENTIFIER_LENGTH)
+    {
+        error("Identifier name too long (max 31 characters)");
+        return;
+    }
+
+    // Copia string
+    std::memcpy(locals_[localCount_].name, name.lexeme.c_str(), len);
+    locals_[localCount_].name[len] = '\0';
+
+    locals_[localCount_].length = (uint8_t)len;
+    locals_[localCount_].depth = -1;
+
+    localCount_++;
 }
 
 void Compiler::markInitialized()
 {
     if (scopeDepth == 0)
         return;
-    if (locals.empty())
+    
+    if (localCount_ == 0)
     {
         error("Internal error: marking uninitialized with no locals");
         return;
     }
-    locals.back().depth = scopeDepth;
+    locals_[localCount_ - 1].depth = scopeDepth;
 }
 
 void Compiler::beginScope()
 {
     scopeDepth++;
 }
+
 int Compiler::resolveLocal(Token &name)
 {
-    // Search backwards (innermost scope first)
-    for (int i = locals.size() - 1; i >= 0; i--)
+    for (int i = localCount_ - 1; i >= 0; i--)
     {
-        Local &local = locals[i];
-        if (name.lexeme == local.name)
+        Local &local = locals_[i];
+
+        if (local.equals(name.lexeme))
         {
             if (local.depth == -1)
             {
@@ -851,18 +866,17 @@ int Compiler::resolveLocal(Token &name)
         }
     }
 
-    return -1; // Not found
+    return -1;
 }
+
 void Compiler::endScope()
 {
     scopeDepth--;
 
-    // Pop all locals from this scope
-    while (!locals.empty() &&
-           locals.back().depth > scopeDepth)
+    while (localCount_ > 0 && locals_[localCount_ - 1].depth > scopeDepth)
     {
         emitByte(OP_POP);
-        locals.pop_back();
+        localCount_--;
     }
 }
 
@@ -1000,12 +1014,12 @@ void Compiler::emitBreak()
 
     LoopContext &ctx = loopContexts.back();
 
-    // Pop variáveis criadas DENTRO do loop (depth > loop depth)
-    while (!locals.empty() && locals.back().depth > ctx.scopeDepth)
+     while (localCount_ > 0 && locals_[localCount_ - 1].depth > ctx.scopeDepth)
     {
         emitByte(OP_POP);
-        locals.pop_back();
+        localCount_--;
     }
+   
 
     ctx.breakJumps.push_back(emitJump(OP_JUMP));
 }
@@ -1020,22 +1034,10 @@ void Compiler::emitContinue()
 
     LoopContext &ctx = loopContexts.back();
 
-    // printf("DEBUG emitContinue: scopeDepth=%d, ctx.scopeDepth=%d, locals.size()=%zu\n",
-    //        scopeDepth, ctx.scopeDepth, locals.size());
-    // for (size_t i = 0; i < locals.size(); i++)
-    // {
-    //     printf("  local[%zu]: name='%s', depth=%d\n",
-    //            i, locals[i].name.c_str(), locals[i].depth);
-    // }
-
-    // Pop variáveis criadas DENTRO do loop (depth > loop depth)
-    while (!locals.empty() && locals.back().depth > ctx.scopeDepth)
+     while (localCount_ > 0 && locals_[localCount_ - 1].depth > ctx.scopeDepth)
     {
-
-        // printf("  POP local: %s (depth %d)\n",
-        //        locals.back().name.c_str(), locals.back().depth);
         emitByte(OP_POP);
-        locals.pop_back();
+        localCount_--;
     }
 
     emitLoop(ctx.loopStart);
@@ -1115,18 +1117,16 @@ void Compiler::loopStatement()
     // Patch dos breaks (única forma de sair!)
     endLoop();
 }
-
 void Compiler::switchStatement()
 {
     consume(TOKEN_LPAREN, "Expect '(' after 'switch'");
     expression(); // Valor do switch fica na stack
     consume(TOKEN_RPAREN, "Expect ')' after switch expression");
-
     consume(TOKEN_LBRACE, "Expect '{' before switch body");
 
     // Variável temporária para guardar o valor do switch
-    // Guardamos em local slot se possível
     int switchValueSlot = -1;
+    
     if (scopeDepth > 0)
     {
         // Local: adiciona variável temporária
@@ -1134,7 +1134,13 @@ void Compiler::switchStatement()
         temp.lexeme = "__switch_temp__";
         addLocal(temp);
         markInitialized();
-        switchValueSlot = locals.size() - 1;
+        
+        // ❌ REMOVE:
+        // switchValueSlot = locals.size() - 1;
+        
+        // ✅ ADICIONA:
+        switchValueSlot = localCount_ - 1;
+        
         emitBytes(OP_SET_LOCAL, (uint8_t)switchValueSlot);
     }
     else
@@ -1144,8 +1150,8 @@ void Compiler::switchStatement()
         uint8_t globalIdx = makeConstant(Value::makeString(tempName));
         emitBytes(OP_DEFINE_GLOBAL, globalIdx);
     }
-
-    std::vector<int> caseEndJumps; // Jumps para o fim do switch
+    
+    std::vector<int> caseEndJumps;
     int defaultStart = -1;
     bool hasDefault = false;
 
@@ -1155,7 +1161,7 @@ void Compiler::switchStatement()
         if (match(TOKEN_CASE))
         {
             // case VALUE:
-
+            
             // Carrega valor do switch
             if (switchValueSlot != -1)
             {
@@ -1177,7 +1183,7 @@ void Compiler::switchStatement()
 
             // Se NÃO for igual, pula este case
             int skipCase = emitJump(OP_JUMP_IF_FALSE);
-            emitByte(OP_POP); // Pop do resultado true
+            emitByte(OP_POP);
 
             // Executa statements do case
             while (!check(TOKEN_CASE) && !check(TOKEN_DEFAULT) &&
@@ -1191,13 +1197,13 @@ void Compiler::switchStatement()
 
             // Se não era igual, pula para aqui (próximo case)
             patchJump(skipCase);
-            emitByte(OP_POP); // Pop do resultado false
+            emitByte(OP_POP);
         }
         else if (match(TOKEN_DEFAULT))
         {
             // default:
             consume(TOKEN_COLON, "Expect ':' after 'default'");
-
+            
             if (hasDefault)
             {
                 error("Switch can only have one 'default' case");
@@ -1232,7 +1238,7 @@ void Compiler::switchStatement()
     }
     else
     {
-        // Global - podemos deixar (ou limpar se quiseres)
+        // Global - podemos deixar (ou limpar )
     }
 }
 
@@ -1417,7 +1423,6 @@ void Compiler::funDeclaration()
     // 4. Define variable
     defineVariable(nameConstant);
 }
-
 void Compiler::compileFunction(const std::string &name)
 {
     if (!vm_->canRegisterFunction(name))
@@ -1425,54 +1430,59 @@ void Compiler::compileFunction(const std::string &name)
         error("Function with this name already registered");
         return;
     }
-
+    
     Function *function = new Function(name, 0);
-
     uint16_t idx = vm_->registerFunction(name, function);
 
     // Salvar estado do compiler atual
     Function *enclosingFunction = this->function;
     Chunk *enclosingChunk = this->currentChunk;
     int enclosingScopeDepth = this->scopeDepth;
-    std::vector<Local> enclosingLocals = this->locals;
+    
+ 
+    Local enclosingLocals[MAX_LOCALS];
+    int enclosingLocalCount = this->localCount_;
+    std::memcpy(enclosingLocals, locals_, sizeof(Local) * localCount_);
 
     // Mudar para compilar a função
     this->function = function;
     this->currentChunk = &function->chunk;
     this->scopeDepth = 0;
-    this->locals.clear();
+    
+ 
+    this->localCount_ = 0;
+    
     function->hasReturn = false;
 
     // Parse parâmetros
-    beginScope(); // Scope para parâmetros
-
+    beginScope();
+    
     consume(TOKEN_LPAREN, "Expect '(' after function name");
-
+    
     if (!check(TOKEN_RPAREN))
     {
         do
         {
             function->arity++;
-
             if (function->arity > 255)
             {
                 error("Can't have more than 255 parameters");
                 break;
             }
-
+            
             consume(TOKEN_IDENTIFIER, "Expect parameter name");
             addLocal(previous);
             markInitialized();
-
+            
         } while (match(TOKEN_COMMA));
     }
-
+    
     consume(TOKEN_RPAREN, "Expect ')' after parameters");
 
     // Parse corpo
     consume(TOKEN_LBRACE, "Expect '{' before function body");
     block();
-
+    
     if (!function->hasReturn)
     {
         emitReturn();
@@ -1482,11 +1492,14 @@ void Compiler::compileFunction(const std::string &name)
     this->function = enclosingFunction;
     this->currentChunk = enclosingChunk;
     this->scopeDepth = enclosingScopeDepth;
-    this->locals = enclosingLocals;
+    
+ 
+    this->localCount_ = enclosingLocalCount;
+    std::memcpy(locals_, enclosingLocals, sizeof(Local) * localCount_);
 
-    // emitBytes(OP_CONSTANT, makeConstant(Value::makeFunction(function)));
     emitBytes(OP_CONSTANT, makeConstant(Value::makeFunction(idx)));
 }
+
 
 void Compiler::prefixIncrement(bool canAssign)
 {

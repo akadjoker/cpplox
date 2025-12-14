@@ -33,12 +33,40 @@ struct ParseRule
     Precedence prec;
 };
 
+#define MAX_IDENTIFIER_LENGTH 32
+#define MAX_LOCALS 256
+
 struct Local
 {
-    std::string name;
+    char name[MAX_IDENTIFIER_LENGTH];
+    uint8_t length;
     int depth;
 
-    Local(const std::string &n, int d) : name(n), depth(d) {}
+    Local() : length(0), depth(-1)
+    {
+        name[0] = '\0';
+    }
+
+    bool equals(const std::string &str) const
+    {
+        
+        if (length != str.length())
+        {
+            return false;  
+        }
+
+      
+        return std::memcmp(name, str.c_str(), length) == 0;
+    }
+
+    bool equals(const char *str, size_t len) const
+    {
+        if (length != len)
+        {
+            return false;
+        }
+        return std::memcmp(name, str, length) == 0;
+    }
 };
 
 struct LoopContext
@@ -47,7 +75,7 @@ struct LoopContext
     std::vector<int> breakJumps; // Lista de breaks para patch depois
     int scopeDepth;              // Scope depth do loop
 };
-
+#define MAX_LOCALS 256
 class Compiler
 {
 public:
@@ -72,8 +100,9 @@ private:
     bool panicMode;
 
     int scopeDepth;
-    std::vector<Local> locals;
-    std::vector<LoopContext> loopContexts;  // Stack of loop contexts
+    Local locals_[MAX_LOCALS];
+    int localCount_;
+    std::vector<LoopContext> loopContexts; // Stack of loop contexts
 
     // Token management
     void advance();
@@ -143,7 +172,6 @@ private:
 
     void prefixIncrement(bool canAssign);
     void prefixDecrement(bool canAssign);
- 
 
     // Variables
     uint8_t identifierConstant(Token &name);
