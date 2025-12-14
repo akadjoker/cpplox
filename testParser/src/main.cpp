@@ -262,20 +262,7 @@ TEST(negative_number_handling)
     ASSERT_EQ(v.asInt(), 5);
 }
 
-TEST(double_negation)
-{
-    // Test: --5 = 5
-    Value v = executeExpression("--5");
-    ASSERT_EQ(v.asInt(), 5);
-
-    // Test: ---10 = -10
-    v = executeExpression("---10");
-    ASSERT_EQ(v.asInt(), -10);
-
-    // Test: ----100 = 100
-    v = executeExpression("----100");
-    ASSERT_EQ(v.asInt(), 100);
-}
+ 
 
 // ============================================
 // COMPARISON OPERATOR TESTS

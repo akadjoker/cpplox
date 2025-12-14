@@ -116,15 +116,15 @@ void VM::registerNative(const char *name, int arity, NativeFunction fn)
     // }
 
     uint16_t func = natives_.registerFunction(name, arity, fn);
-    // if (!globals_->define(name, std::move(Value::makeNative(func))))
-    // {
-    //     runtimeError("Native function '%s' already registered", name);
-    // }
-    // else
-    // {
+    if (!globals_->define(name, std::move(Value::makeNative(func))))
+    {
+        runtimeError("Native function '%s' already registered", name);
+    }
+    else
+    {
 
-    //    // printf("Registering native function '%s' at index %d\n", name, func);
-    // }
+       // printf("Registering native function '%s' at index %d\n", name, func);
+    }
 }
 
 uint16_t VM::getFunctionId(const char *name)
@@ -1271,11 +1271,11 @@ bool VM::executeInstruction(CallFrame *&frame)
         
 
      
-        // if (global_cache_.name == name)
-        // {
-        //     push(*global_cache_.value_ptr);
-        //     break;
-        // }
+        if (global_cache_.name == name)
+        {
+            push(*global_cache_.value_ptr);
+            break;
+        }
 
         // Cache miss - lookup normal
         Value *value = globals_->get_ptr(name);
@@ -1288,8 +1288,8 @@ bool VM::executeInstruction(CallFrame *&frame)
      
 
      
-        // global_cache_.name = name;
-        // global_cache_.value_ptr = value;
+        global_cache_.name = name;
+        global_cache_.value_ptr = value;
 
         push(*value);
         break;
@@ -1365,9 +1365,13 @@ bool VM::executeInstruction(CallFrame *&frame)
         printValue(funcVal);
         if (!funcVal.isFunction())
         {
-            runtimeError("Attempt to call a non-function value (type: %s)",
-                         TypeName(funcVal.type));
-            return false;
+            if (!callNative("clock", argCount))
+            {
+                return false;
+            }
+           // runtimeError("Attempt to call a non-function value (type: %s)",
+             //            TypeName(funcVal.type));
+            break;
         }
         uint16_t funcIdx = funcVal.asFunctionIdx();
         Function *function = getFunction(funcIdx);

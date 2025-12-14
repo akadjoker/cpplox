@@ -23,41 +23,34 @@ private:
     struct HashNode
     {
         char key[MAX_VAR_NAME_LENGTH];
+        size_t hash;
+        size_t len;
         Value value;
         bool occupied;
-        size_t len;
 
-        HashNode() : occupied(false)
+        HashNode() : hash(0), len(0), occupied(false)
         {
             key[0] = '\0';
             value.type = VAL_NULL;
-            len = 0;
         }
 
-        // Helper: seta key de forma segura
-        void set_key(const char *str)
+        void set_key(const char *str, size_t h)
         {
+            hash = h;
             len = strlen(str);
             if (len >= MAX_VAR_NAME_LENGTH)
-            {
                 len = MAX_VAR_NAME_LENGTH - 1;
-            }
+
             memcpy(key, str, len);
             key[len] = '\0';
         }
 
-  
-        bool key_equals(const char *str) const
+        bool key_equals(const char *str, size_t h) const
         {
-            
-            size_t str_len = strlen(str);
-            if (len != str_len)
-            {
-                return false;  
-            }
-
-             
-            return memcmp(key, str, len) == 0;
+            return occupied &&
+                   hash == h &&
+                   memcmp(key, str, len) == 0 &&
+                   str[len] == '\0';
         }
     };
 
@@ -72,23 +65,37 @@ private:
     // ========================================================================
     // HASH FUNCTION - SIMD-friendly FNV-1a
     // ========================================================================
-    size_t hash_string(const char *str) const
-    {
-        size_t h = 14695981039346656037ULL;
-        const char *p = str;
+    // size_t hash_string(const char *str) const
+    // {
+    //     size_t h = 14695981039346656037ULL;
+    //     const char *p = str;
 
-        // Process 8 bytes at a time when possible
-        while (*p && *(p + 7))
+    //     // Process 8 bytes at a time when possible
+    //     while (*p && *(p + 7))
+    //     {
+    //         h = (h ^ *(uint64_t *)p) * 1099511628211ULL;
+    //         p += 8;
+    //     }
+
+    //     // Finish remaining bytes
+    //     while (*p)
+    //         h = (h ^ *p++) * 1099511628211ULL;
+
+    //     return h;
+    // }
+
+    size_t hash_string(const char *s) const
+    {
+        uint64_t h = 14695981039346656037ULL;
+        const unsigned char *p = (const unsigned char *)s;
+
+        while (*p)
         {
-            h = (h ^ *(uint64_t *)p) * 1099511628211ULL;
-            p += 8;
+            h ^= *p++;
+            h *= 1099511628211ULL;
         }
 
-        // Finish remaining bytes
-        while (*p)
-            h = (h ^ *p++) * 1099511628211ULL;
-
-        return h;
+        return (size_t)h;
     }
 
     // ========================================================================
@@ -258,7 +265,6 @@ public:
         for (size_t i = 0; i < array_size; ++i)
         {
             printValue(array[i]);
-            
         }
         for (size_t i = 0; i < hash_capacity; ++i)
         {
@@ -266,7 +272,6 @@ public:
             {
                 printf("%s: ", hash_buckets[i].key);
                 printValue(hash_buckets[i].value);
-                
             }
         }
     }
@@ -344,7 +349,7 @@ public:
     // DEFINE: Insere apenas se NÃO existir. Retorna true se definiu, false se já existia
     // NÃO atualiza o valor se já existir - é para definição de variáveis novas
 
-    inline bool define(const char *key_str,  Value value)
+    inline bool define(const char *key_str, Value value)
     {
         if (hash_capacity == 0)
             resize_hash(INITIAL_HASH_CAPACITY);
@@ -354,30 +359,26 @@ public:
 
         size_t h = hash_string(key_str);
         size_t slot = h & (hash_capacity - 1);
-        size_t original_slot = slot;
+        size_t start = slot;
 
         do
         {
-            HashNode &bucket = hash_buckets[slot];
+            HashNode &b = hash_buckets[slot];
 
-            if (!bucket.occupied)
+            if (!b.occupied)
             {
-
-                bucket.set_key(key_str);
-                bucket.value = std::move(value);
-                bucket.occupied = true;
+                b.set_key(key_str, h);
+                b.value = value;
+                b.occupied = true;
                 ++hash_size;
                 return true;
             }
 
-    
-            if (bucket.key_equals(key_str))
-            {
-                return false; // Já existia
-            }
+            if (b.key_equals(key_str, h))
+                return false;
 
             slot = (slot + 1) & (hash_capacity - 1);
-        } while (slot != original_slot);
+        } while (slot != start);
 
         return false;
     }
@@ -391,20 +392,20 @@ public:
 
         size_t h = hash_string(key_str);
         size_t slot = h & (hash_capacity - 1);
-        size_t original_slot = slot;
+        size_t start = slot;
 
         do
         {
-            HashNode &bucket = hash_buckets[slot];
+            HashNode &b = hash_buckets[slot];
 
-            if (!bucket.occupied)
+            if (!b.occupied)
                 return nullptr;
 
-            if (bucket.key_equals(key_str))
-                return &bucket.value;
+            if (b.key_equals(key_str, h))
+                return &b.value;
 
             slot = (slot + 1) & (hash_capacity - 1);
-        } while (slot != original_slot);
+        } while (slot != start);
 
         return nullptr;
     }
@@ -418,23 +419,23 @@ public:
 
         size_t h = hash_string(key_str);
         size_t slot = h & (hash_capacity - 1);
-        size_t original_slot = slot;
+        size_t start = slot;
 
         do
         {
-            HashNode &bucket = hash_buckets[slot];
+            HashNode &b = hash_buckets[slot];
 
-            if (!bucket.occupied)
+            if (!b.occupied)
                 return false;
 
-            if (bucket.key_equals(key_str))
+            if (b.key_equals(key_str, h))
             {
-                bucket.value = value;
+                b.value = value;
                 return true;
             }
 
             slot = (slot + 1) & (hash_capacity - 1);
-        } while (slot != original_slot);
+        } while (slot != start);
 
         return false;
     }

@@ -787,7 +787,7 @@ void Compiler::namedVariable(Token &name, bool canAssign)
     else
     {
      
-         printf("namedVariable\n");   // Leitura normal
+   
         emitBytes(getOp, (uint8_t)arg);
     }
 }
