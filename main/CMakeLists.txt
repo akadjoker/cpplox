@@ -2,7 +2,7 @@ project(main)
 cmake_policy(SET CMP0072 NEW)
 
 
-set(CMAKE_CXX_STANDARD 11)
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ")
 
 if (WIN32)
@@ -19,11 +19,31 @@ endif()
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/bin)
 
 add_compile_options(
-    -Wall 
-   -Wextra
-   -Werror
+        # Optimization level
+        -O3
+        
+        # Link-time optimization
+        -flto
+        
+        # Architecture specific
+        -march=native
+        -mtune=native
+        
+
+        
+        # Vectorization
+        -ftree-vectorize
+        
+        # Strip debug info
+        -DNDEBUG
+        
+        # Inline agressivo
+        -finline-functions
+        -funroll-loops
+
 )
 
+ 
 
 file(GLOB SOURCES "src/*.cpp")
 add_executable(main   ${SOURCES})
@@ -39,11 +59,8 @@ if (UNIX)
 target_compile_options(main PRIVATE -fsanitize=address -fsanitize=undefined -fsanitize=leak -g  -D_DEBUG -DVERBOSE)
 target_link_options(main PRIVATE -fsanitize=address -fsanitize=undefined -fsanitize=leak -g  -D_DEBUG) 
 endif()
-
-
-elseif(CMAKE_BUILD_TYPE MATCHES Release)
-    target_compile_options(main PRIVATE -O3   -DNDEBUG )
-    target_link_options(main PRIVATE -O3   -DNDEBUG )
+ 
+   
 endif()
 
 target_link_libraries(main libwren)

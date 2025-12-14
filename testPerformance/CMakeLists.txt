@@ -19,10 +19,30 @@ endif()
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/bin)
 
 add_compile_options(
-    -Wall 
-   -Wextra
-   -Werror
+        # Optimization level
+        -O3
+        
+        # Link-time optimization
+        -flto
+        
+        # Architecture specific
+        -march=native
+        -mtune=native
+        
+
+        
+        # Vectorization
+        -ftree-vectorize
+        
+        # Strip debug info
+        -DNDEBUG
+        
+        # Inline agressivo
+        -finline-functions
+        -funroll-loops
+
 )
+
 
 
 file(GLOB SOURCES "src/*.cpp")
@@ -38,12 +58,9 @@ if(CMAKE_BUILD_TYPE MATCHES Debug)
 if (UNIX)
 target_compile_options(testPerformance PRIVATE -fsanitize=address -fsanitize=undefined -fsanitize=leak -g  -D_DEBUG -DVERBOSE)
 target_link_options(testPerformance PRIVATE -fsanitize=address -fsanitize=undefined -fsanitize=leak -g  -D_DEBUG) 
+ 
 endif()
 
-
-elseif(CMAKE_BUILD_TYPE MATCHES Release)
-    target_compile_options(testPerformance PRIVATE -O3   -DNDEBUG )
-    target_link_options(testPerformance PRIVATE -O3   -DNDEBUG )
 endif()
 
 target_link_libraries(testPerformance libwren)
