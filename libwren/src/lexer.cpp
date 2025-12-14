@@ -475,32 +475,32 @@ Token Lexer::scanToken()
         return errorToken("Unexpected character");
     }
 }
-// Token Lexer::nextToken()
-// {
+Token Lexer::nextToken()
+{
 
-//     if (hasPendingError)
-//     {
-//         Token errorTok(TOKEN_ERROR, pendingErrorMessage,
-//                        pendingErrorLine, pendingErrorColumn);
-//         hasPendingError = false; // Limpa erro
-//         return errorTok;
-//     }
+    if (hasPendingError)
+    {
+        Token errorTok(TOKEN_ERROR, pendingErrorMessage,
+                       pendingErrorLine, pendingErrorColumn);
+        hasPendingError = false; // Limpa erro
+        return errorTok;
+    }
 
-//     skipWhitespace();
+    skipWhitespace();
 
-//     if (hasPendingError)
-//     {
-//         Token errorTok(TOKEN_ERROR, pendingErrorMessage,
-//                        pendingErrorLine, pendingErrorColumn);
-//         hasPendingError = false;
-//         return errorTok;
-//     }
+    if (hasPendingError)
+    {
+        Token errorTok(TOKEN_ERROR, pendingErrorMessage,
+                       pendingErrorLine, pendingErrorColumn);
+        hasPendingError = false;
+        return errorTok;
+    }
 
-//     start = current;
-//     tokenColumn = column;
+    start = current;
+    tokenColumn = column;
 
-//     return scanToken();
-// }
+    return scanToken();
+}
 
 // Token Lexer::scanToken()
 // {
