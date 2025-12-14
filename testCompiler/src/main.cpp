@@ -1246,7 +1246,7 @@ TEST(for_loop_nested)
 TEST(for_loop_scope_isolation)
 {
     std::string code = R"(
-        for (var i = 0; i < 3; i = i + 1) {
+        for (var i = 0; i < 3; i++) {
             var x = i * 10;
         }
         // i e x não existem aqui - não dá erro mas também não são acessíveis
@@ -1256,6 +1256,50 @@ TEST(for_loop_scope_isolation)
     ASSERT_EQ(result.asInt(), 42);
 }
 
+
+TEST(compound_assignment_add)
+{
+    std::string code = R"(
+        var x = 10;
+        x += 5;
+    )";
+    Value result = executeProgram(code, "x");
+    ASSERT_EQ(result.asInt(), 15);
+}
+
+TEST(prefix_increment)
+{
+    std::string code = R"(
+        var i = 5;
+        var result = ++i;
+    )";
+    
+    VM vm;
+    vm.interpret(code);
+    
+    vm.GetGlobal( "i");
+    ASSERT_EQ(vm.Pop().asInt(), 6);
+    
+    vm.GetGlobal( "result");
+    ASSERT_EQ(vm.Pop().asInt(), 6);  // Retorna novo valor
+}
+
+TEST(postfix_increment)
+{
+    std::string code = R"(
+        var i = 5;
+        var result = i++;
+    )";
+    
+    VM vm;
+    vm.interpret(code);
+    
+    vm.GetGlobal("i");
+    ASSERT_EQ(vm.Pop().asInt(), 6);
+    
+    vm.GetGlobal("result");
+    ASSERT_EQ(vm.Pop().asInt(), 5);  // Retorna valor antigo
+}
 // ============================================
 // MAIN
 // ============================================

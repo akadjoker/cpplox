@@ -66,6 +66,9 @@ void Compiler::initRules()
     rules[TOKEN_GREATER] = {nullptr, &Compiler::binary, PREC_COMPARISON};
     rules[TOKEN_GREATER_EQUAL] = {nullptr, &Compiler::binary, PREC_COMPARISON};
 
+    rules[TOKEN_PLUS_PLUS] = {&Compiler::prefixIncrement, nullptr, PREC_NONE};
+    rules[TOKEN_MINUS_MINUS] = {&Compiler::prefixDecrement, nullptr, PREC_NONE};
+
     // Logical
     rules[TOKEN_AND_AND] = {nullptr, &Compiler::and_, PREC_AND};
     rules[TOKEN_OR_OR] = {nullptr, &Compiler::or_, PREC_OR};
@@ -651,6 +654,7 @@ uint8_t Compiler::identifierConstant(Token &name)
     const char *interned = StringPool::instance().intern(name.lexeme);
     return makeConstant(Value::makeString(interned));
 }
+
 void Compiler::namedVariable(Token &name, bool canAssign)
 {
     uint8_t getOp, setOp;
@@ -658,25 +662,79 @@ void Compiler::namedVariable(Token &name, bool canAssign)
 
     if (arg != -1)
     {
-
         getOp = OP_GET_LOCAL;
         setOp = OP_SET_LOCAL;
     }
     else
     {
-        // Global variable
         arg = identifierConstant(name);
         getOp = OP_GET_GLOBAL;
         setOp = OP_SET_GLOBAL;
     }
+    Token varName = name;
 
-    if (canAssign && match(TOKEN_EQUAL))
+    if (match(TOKEN_PLUS_PLUS))
+    {
+        // i++ (postfix)
+        emitBytes(getOp, (uint8_t)arg);
+        emitBytes(getOp, (uint8_t)arg);
+        emitConstant(Value::makeInt(1));
+        emitByte(OP_ADD);
+        emitBytes(setOp, (uint8_t)arg);
+        emitByte(OP_POP);  
+    }
+    else if (match(TOKEN_MINUS_MINUS))
+    {
+        // i-- (postfix)
+        emitBytes(getOp, (uint8_t)arg);
+        emitBytes(getOp, (uint8_t)arg);
+        emitConstant(Value::makeInt(1));
+        emitByte(OP_SUBTRACT);
+        emitBytes(setOp, (uint8_t)arg);
+    }
+    else if (canAssign && match(TOKEN_EQUAL))
     {
         expression();
         emitBytes(setOp, (uint8_t)arg);
     }
+    else if (canAssign && match(TOKEN_PLUS_EQUAL))
+    {
+        emitBytes(getOp, (uint8_t)arg);
+        expression();
+        emitByte(OP_ADD);
+        emitBytes(setOp, (uint8_t)arg);
+    }
+    else if (canAssign && match(TOKEN_MINUS_EQUAL))
+    {
+        emitBytes(getOp, (uint8_t)arg);
+        expression();
+        emitByte(OP_SUBTRACT);
+        emitBytes(setOp, (uint8_t)arg);
+    }
+    else if (canAssign && match(TOKEN_STAR_EQUAL))
+    {
+        emitBytes(getOp, (uint8_t)arg);
+        expression();
+        emitByte(OP_MULTIPLY);
+        emitBytes(setOp, (uint8_t)arg);
+    }
+    else if (canAssign && match(TOKEN_SLASH_EQUAL))
+    {
+        emitBytes(getOp, (uint8_t)arg);
+        expression();
+        emitByte(OP_DIVIDE);
+        emitBytes(setOp, (uint8_t)arg);
+    }
+    else if (canAssign && match(TOKEN_PERCENT_EQUAL))
+    {
+        emitBytes(getOp, (uint8_t)arg);
+        expression();
+        emitByte(OP_MODULO);
+        emitBytes(setOp, (uint8_t)arg);
+    }
     else
     {
+        // Leitura normal
         emitBytes(getOp, (uint8_t)arg);
     }
 }
@@ -1223,4 +1281,79 @@ void Compiler::compileFunction(const std::string &name)
 
     // emitBytes(OP_CONSTANT, makeConstant(Value::makeFunction(function)));
     emitBytes(OP_CONSTANT, makeConstant(Value::makeFunction(idx)));
+}
+
+void Compiler::prefixIncrement(bool canAssign)
+{
+    // ++i
+    // previous = '++', current deve ser identifier
+
+    if (!check(TOKEN_IDENTIFIER))
+    {
+        error("Expect variable name after '++'");
+        return;
+    }
+
+    advance();             // Consome o identifier manualmente
+    Token name = previous; // Agora previous é o identifier
+
+    uint8_t getOp, setOp;
+    int arg = resolveLocal(name);
+
+    if (arg != -1)
+    {
+        getOp = OP_GET_LOCAL;
+        setOp = OP_SET_LOCAL;
+    }
+    else
+    {
+        arg = identifierConstant(name);
+        getOp = OP_GET_GLOBAL;
+        setOp = OP_SET_GLOBAL;
+    }
+
+    // i = i + 1
+    emitBytes(getOp, (uint8_t)arg);
+    emitConstant(Value::makeInt(1));
+    emitByte(OP_ADD);
+    emitBytes(setOp, (uint8_t)arg);
+
+    // Lê o novo valor para retornar
+    emitBytes(getOp, (uint8_t)arg);
+}
+
+void Compiler::prefixDecrement(bool canAssign)
+{
+    // --i
+
+    if (!check(TOKEN_IDENTIFIER))
+    {
+        error("Expect variable name after '--'");
+        return;
+    }
+
+    advance();
+    Token name = previous;
+
+    uint8_t getOp, setOp;
+    int arg = resolveLocal(name);
+
+    if (arg != -1)
+    {
+        getOp = OP_GET_LOCAL;
+        setOp = OP_SET_LOCAL;
+    }
+    else
+    {
+        arg = identifierConstant(name);
+        getOp = OP_GET_GLOBAL;
+        setOp = OP_SET_GLOBAL;
+    }
+
+    emitBytes(getOp, (uint8_t)arg);
+    emitConstant(Value::makeInt(1));
+    emitByte(OP_SUBTRACT);
+    emitBytes(setOp, (uint8_t)arg);
+
+    emitBytes(getOp, (uint8_t)arg);
 }

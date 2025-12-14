@@ -138,6 +138,10 @@ private:
     void returnStatement();
     void block();
 
+    void prefixIncrement(bool canAssign);
+    void prefixDecrement(bool canAssign);
+ 
+
     // Variables
     uint8_t identifierConstant(Token &name);
     void namedVariable(Token &name, bool canAssign);
