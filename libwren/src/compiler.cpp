@@ -24,6 +24,7 @@ Compiler::Compiler(VM *vm)
 {
 
     initRules();
+    locals.reserve(256);
 }
 Compiler::~Compiler()
 {
