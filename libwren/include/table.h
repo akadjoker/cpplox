@@ -25,17 +25,19 @@ private:
         char key[MAX_VAR_NAME_LENGTH];
         Value value;
         bool occupied;
+        size_t len;
 
         HashNode() : occupied(false)
         {
             key[0] = '\0';
             value.type = VAL_NULL;
+            len = 0;
         }
 
         // Helper: seta key de forma segura
         void set_key(const char *str)
         {
-            size_t len = strlen(str);
+            len = strlen(str);
             if (len >= MAX_VAR_NAME_LENGTH)
             {
                 len = MAX_VAR_NAME_LENGTH - 1;
@@ -44,10 +46,18 @@ private:
             key[len] = '\0';
         }
 
-        // Helper: compara key
+  
         bool key_equals(const char *str) const
         {
-            return strcmp(key, str) == 0;
+            
+            size_t str_len = strlen(str);
+            if (len != str_len)
+            {
+                return false;  
+            }
+
+             
+            return memcmp(key, str, len) == 0;
         }
     };
 
@@ -183,12 +193,12 @@ public:
     ~Table()
     {
         clear();
-    
-    if (array) 
-        free(array);
-    
-    if (hash_buckets) 
-        free(hash_buckets);
+
+        if (array)
+            free(array);
+
+        if (hash_buckets)
+            free(hash_buckets);
     }
 
     // GET_INDEX: Retorna índice interno ou -1 se não existir
@@ -255,10 +265,9 @@ public:
             array_size = 0;
         }
 
- 
         if (hash_buckets)
         {
-            
+
             for (size_t i = 0; i < hash_capacity; ++i)
             {
                 hash_buckets[i].occupied = false;

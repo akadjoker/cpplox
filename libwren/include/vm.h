@@ -102,6 +102,18 @@ private:
     Compiler* compiler;
     Value stack_[STACK_MAX];
     Value *stackTop_;
+
+   struct GlobalCache {
+        const char* name;
+        Value* value_ptr;
+        
+        GlobalCache() : name(nullptr), value_ptr(nullptr) {}
+        
+        void invalidate() {
+            name = nullptr;
+            value_ptr = nullptr;
+        }
+    } global_cache_;
     
     CallFrame frames_[FRAMES_MAX];
     int frameCount_;

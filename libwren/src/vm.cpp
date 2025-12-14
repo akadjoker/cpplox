@@ -13,7 +13,6 @@ VM::VM() : stackTop_(stack_), frameCount_(0), hasFatalError_(false)
     natives_.registerBuiltins();
     compiler = new Compiler(this);
     globals_ = new Table();
-  
 }
 
 VM::~VM()
@@ -162,7 +161,7 @@ bool VM::callFunction(Function *function, int argCount)
 InterpretResult VM::interpret(Function *function)
 {
 
-   // push(Value::makeNull());
+    // push(Value::makeNull());
 
     CallFrame *frame = &frames_[frameCount_++];
     frame->function = function;
@@ -179,7 +178,7 @@ InterpretResult VM::interpret(const std::string &source)
     {
         return InterpretResult::COMPILE_ERROR;
     }
-   //push(Value::makeNull());
+    // push(Value::makeNull());
 
     CallFrame *frame = &frames_[frameCount_++];
     frame->function = function;
@@ -595,21 +594,21 @@ void VM::SetGlobal(const char *name)
     Value value = Pop();
     if (!globals_->define(name, value))
     {
-         runtimeError("Global '%s' already exists", name);
+        runtimeError("Global '%s' already exists", name);
     }
 }
 
 void VM::GetGlobal(const char *name)
 {
-    const char* interned = StringPool::instance().intern(name);
-    
+    const char *interned = StringPool::instance().intern(name);
+
     // if (!globals_->contains(interned))
     // {
     //     runtimeError("Undefined global '%s'", interned);
     //     PushNull();
     //     return;
     // }
-    //Push(globals_->get(interned));
+    // Push(globals_->get(interned));
 
     Value *value = globals_->get_ptr(interned);
 
@@ -622,8 +621,6 @@ void VM::GetGlobal(const char *name)
         runtimeError("Undefined global '%s'", interned);
         PushNull();
     }
-
-
 }
 
 void VM::Call(int argCount, int resultCount)
@@ -727,9 +724,6 @@ void VM::DumpStack()
 
 void VM::DumpGlobals()
 {
-    
-    
-
 }
 
 const char *VM::TypeName(ValueType type)
@@ -1222,14 +1216,10 @@ bool VM::executeInstruction(CallFrame *&frame)
             runtimeError("Variable '%s' already defined", name);
             return false;
         }
-        
-        // if (!globals_->contains(name))
-        // {
-        //     runtimeError("Variable '%s' already defined", name);
-        //     return false;
-        // }
 
-        //globals_->define(name, value);
+        // ✅ Invalida cache (nova variável pode ter mudado índices)
+        global_cache_.invalidate();
+
         break;
     }
 
@@ -1237,22 +1227,26 @@ bool VM::executeInstruction(CallFrame *&frame)
     {
         const char *name = READ_STRING_PTR();
 
+        // ✅ Cache hit? (comparação de pointers!)
+        if (global_cache_.name == name)
+        {
+            push(*global_cache_.value_ptr);
+            break;
+        }
+
+        // Cache miss - lookup normal
         Value *value = globals_->get_ptr(name);
         if (value == nullptr)
         {
             runtimeError("Undefined variable '%s'", name);
             return false;
         }
+
+        // ✅ Atualiza cache
+        global_cache_.name = name;
+        global_cache_.value_ptr = value;
+
         push(*value);
-
-        // if (!globals_->contains(name))
-        // {
-        //     runtimeError("Undefined variable '%s'", name);
-        //     return false;
-        // }
-
-        // push(globals_->get(name));
-
         break;
     }
 
@@ -1260,19 +1254,24 @@ bool VM::executeInstruction(CallFrame *&frame)
     {
         const char *name = READ_STRING_PTR();
 
-        if(!globals_->set_if_exists(name, peek(0)))
+        // ✅ Cache hit?
+        if (global_cache_.name == name && global_cache_.value_ptr != nullptr)
+        {
+            *global_cache_.value_ptr = peek(0);
+            break;
+        }
+
+        // Cache miss
+        if (!globals_->set_if_exists(name, peek(0)))
         {
             runtimeError("Undefined variable '%s'", name);
             return false;
         }
 
-        // if (!globals_->contains(name))
-        // {
-        //     runtimeError("Undefined variable '%s'", name);
-        //     return false;
-        // }
+        // ✅ Atualiza cache
+        global_cache_.name = name;
+        global_cache_.value_ptr = globals_->get_ptr(name);
 
-       // globals_->set(name, peek(0));
         break;
     }
 
@@ -1344,14 +1343,14 @@ bool VM::executeInstruction(CallFrame *&frame)
 
     case OP_RETURN:
     {
-        //DumpStack();
+        // DumpStack();
         Value result = pop();
         Value *resultSlot = frame->slots;
         frameCount_--;
 
         if (frameCount_ == 0)
         {
-            //printf("=== Script finished ===\n");
+            // printf("=== Script finished ===\n");
 
             // Script principal terminou
             stackTop_ = stack_;
@@ -1363,10 +1362,10 @@ bool VM::executeInstruction(CallFrame *&frame)
             stackTop_ = resultSlot;
             push(result);
 
-            //printf("DEBUG: Returning value: ");
-            //printValue(result);
-            //printf("\n");
-            //DumpStack();  // See stack after return
+            // printf("DEBUG: Returning value: ");
+            // printValue(result);
+            // printf("\n");
+            // DumpStack();  // See stack after return
             frame = &frames_[frameCount_ - 1];
         }
         break;
