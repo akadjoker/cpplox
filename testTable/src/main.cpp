@@ -6,7 +6,7 @@
 #include <vector>
 #include <string>
 #include "table.h"
-#include "symboltable_table.h"
+ 
 
 // Cores para output
 #define RESET   "\033[0m"

@@ -963,7 +963,7 @@ void Compiler::ifStatement()
 //     // Then branch
 //     statement();  // Compila o bloco then
 
-//     // Jump para pular o else
+//     // Jump para saltar o else
 //     int elseJump = emitJump(OP_JUMP);
 
 //     // Patch do thenJump (aponta aqui se condição for falsa)
@@ -1139,11 +1139,7 @@ void Compiler::switchStatement()
         temp.lexeme = "__switch_temp__";
         addLocal(temp);
         markInitialized();
-
-        // ❌ REMOVE:
-        // switchValueSlot = locals.size() - 1;
-
-        // ✅ ADICIONA:
+ 
         switchValueSlot = localCount_ - 1;
 
         emitBytes(OP_SET_LOCAL, (uint8_t)switchValueSlot);
@@ -1186,7 +1182,7 @@ void Compiler::switchStatement()
             // Compara
             emitByte(OP_EQUAL);
 
-            // Se NÃO for igual, pula este case
+            // Se NÃO for igual, salta este case
             int skipCase = emitJump(OP_JUMP_IF_FALSE);
             emitByte(OP_POP);
 
@@ -1197,10 +1193,10 @@ void Compiler::switchStatement()
                 statement();
             }
 
-            // Break implícito - pula para o fim
+            // Break implícito - salta para o fim
             caseEndJumps.push_back(emitJump(OP_JUMP));
 
-            // Se não era igual, pula para aqui (próximo case)
+            // Se não era igual, salta para aqui (próximo case)
             patchJump(skipCase);
             emitByte(OP_POP);
         }
@@ -1291,7 +1287,7 @@ void Compiler::forStatement()
         expression(); // i < 10
         consume(TOKEN_SEMICOLON, "Expect ';' after loop condition");
 
-        // Pula para fora se condição for falsa
+        // salta para fora se condição for falsa
         exitJump = emitJump(OP_JUMP_IF_FALSE);
         emitByte(OP_POP); // Pop da condição
     }
@@ -1302,10 +1298,10 @@ void Compiler::forStatement()
 
     // INCREMENT (opcional)
     // Problema: increment vem ANTES do body no código, mas executa DEPOIS
-    // Solução: pular o increment, executar body, depois voltar pro increment
+    // Solução: saltar o increment, executar body, depois voltar pro increment
     if (!check(TOKEN_RPAREN))
     {
-        // Pula sobre o código do increment
+        // salta sobre o código do increment
         int bodyJump = emitJump(OP_JUMP);
 
         int incrementStart = currentChunk->count();
@@ -1319,7 +1315,7 @@ void Compiler::forStatement()
         // Agora loopStart aponta para o increment (para continue)
         loopStart = incrementStart;
 
-        // Patch do bodyJump para pular o increment
+        // Patch do bodyJump para saltar o increment
         patchJump(bodyJump);
     }
     else

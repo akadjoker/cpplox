@@ -5,6 +5,7 @@
 #include "value.h"
 #include <string>
 #include <vector>
+#include <cstring>
 
 class Compiler;
 class VM;

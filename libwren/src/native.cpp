@@ -4,6 +4,7 @@
 #include <cmath>
 #include <ctime>
 #include <chrono>
+#include <cstring>
 
 void NativeRegistry::registerFunction(const std::string &name, int arity, NativeFunction fn)
 {
