@@ -11,5 +11,6 @@ add_subdirectory(testLexer)
 add_subdirectory(testBytecode)
 add_subdirectory(testCompiler)
 add_subdirectory(testPerformance)
+add_subdirectory(testTable)
  
 

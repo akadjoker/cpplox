@@ -1,5 +1,6 @@
 #include "vm.h"
 #include "stringpool.h"
+#include "table.h"
 #include "compiler.h"
 #include <cstdio>
 #include <cstdarg>
@@ -11,12 +12,14 @@ VM::VM() : stackTop_(stack_), frameCount_(0), hasFatalError_(false)
 {
     natives_.registerBuiltins();
     compiler = new Compiler(this);
+    globals_ = new Table();
   
 }
 
 VM::~VM()
 {
 
+    delete globals_;
     delete compiler;
     StringPool::instance().clear();
     for (Function *func : functions_)
@@ -584,26 +587,43 @@ bool VM::IsFunction(int index)
 // Globals
 void VM::SetGlobal(const char *name)
 {
-    if (globals_.find(name) != globals_.end())
-    {
-        runtimeError("Global '%s' already exists", name);
-        return;
-    }
+    // if (!globals_->contains(name))
+    // {
+    //     runtimeError("Global '%s' already exists", name);
+    //     return;
+    // }
     Value value = Pop();
-    globals_[name] = value;
+    if (!globals_->define(name, value))
+    {
+         runtimeError("Global '%s' already exists", name);
+    }
 }
 
 void VM::GetGlobal(const char *name)
 {
     const char* interned = StringPool::instance().intern(name);
     
-    if (globals_.find(interned) == globals_.end())
+    // if (!globals_->contains(interned))
+    // {
+    //     runtimeError("Undefined global '%s'", interned);
+    //     PushNull();
+    //     return;
+    // }
+    //Push(globals_->get(interned));
+
+    Value *value = globals_->get_ptr(interned);
+
+    if (value)
+    {
+        Push(*value);
+    }
+    else
     {
         runtimeError("Undefined global '%s'", interned);
         PushNull();
-        return;
     }
-    Push(globals_[interned]);
+
+
 }
 
 void VM::Call(int argCount, int resultCount)
@@ -707,22 +727,9 @@ void VM::DumpStack()
 
 void VM::DumpGlobals()
 {
-    printf("=== Globals Dump (count: %zu) ===\n", globals_.size());
+    
+    
 
-    if (globals_.empty())
-    {
-        printf("  (none)\n");
-        return;
-    }
-
-    // for (const auto &[name, value] : globals_)
-    // {
-    //     printf("  %s = ", name);
-    //     printValue(value);
-    //     printf("\n");
-    // }
-
-    printf("================================\n");
 }
 
 const char *VM::TypeName(ValueType type)
@@ -1210,27 +1217,41 @@ bool VM::executeInstruction(CallFrame *&frame)
         const char *name = READ_STRING_PTR();
         Value value = pop();
 
-        // Fast lookup using pointer hash
-        if (globals_.count(name))
+        if (!globals_->define(name, value))
         {
             runtimeError("Variable '%s' already defined", name);
             return false;
         }
+        
+        // if (!globals_->contains(name))
+        // {
+        //     runtimeError("Variable '%s' already defined", name);
+        //     return false;
+        // }
 
-        globals_[name] = value;
+        //globals_->define(name, value);
         break;
     }
 
     case OP_GET_GLOBAL:
     {
         const char *name = READ_STRING_PTR();
-        if (!globals_.count(name))
+
+        Value *value = globals_->get_ptr(name);
+        if (value == nullptr)
         {
             runtimeError("Undefined variable '%s'", name);
             return false;
         }
+        push(*value);
 
-        push(globals_[name]);
+        // if (!globals_->contains(name))
+        // {
+        //     runtimeError("Undefined variable '%s'", name);
+        //     return false;
+        // }
+
+        // push(globals_->get(name));
 
         break;
     }
@@ -1239,13 +1260,19 @@ bool VM::executeInstruction(CallFrame *&frame)
     {
         const char *name = READ_STRING_PTR();
 
-        if (!globals_.count(name))
+        if(!globals_->set_if_exists(name, peek(0)))
         {
             runtimeError("Undefined variable '%s'", name);
             return false;
         }
 
-        globals_[name] = peek(0);
+        // if (!globals_->contains(name))
+        // {
+        //     runtimeError("Undefined variable '%s'", name);
+        //     return false;
+        // }
+
+       // globals_->set(name, peek(0));
         break;
     }
 
