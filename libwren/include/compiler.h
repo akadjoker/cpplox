@@ -49,13 +49,12 @@ struct Local
 
     bool equals(const std::string &str) const
     {
-        
+
         if (length != str.length())
         {
-            return false;  
+            return false;
         }
 
-      
         return std::memcmp(name, str.c_str(), length) == 0;
     }
 
@@ -69,12 +68,30 @@ struct Local
     }
 };
 
+#define MAX_LOOP_DEPTH 32
+#define MAX_BREAKS_PER_LOOP 256
+
 struct LoopContext
 {
-    int loopStart;               // Onde o loop começa (para continue)
-    std::vector<int> breakJumps; // Lista de breaks para patch depois
-    int scopeDepth;              // Scope depth do loop
+    int loopStart;
+    int breakJumps[MAX_BREAKS_PER_LOOP];
+    int breakCount;
+    int scopeDepth;
+
+    LoopContext() : loopStart(0), breakCount(0), scopeDepth(0) {}
+
+    bool addBreak(int jump)
+    {
+        if (breakCount >= MAX_BREAKS_PER_LOOP)
+        {
+
+            return false;
+        }
+        breakJumps[breakCount++] = jump;
+        return true;
+    }
 };
+
 #define MAX_LOCALS 256
 class Compiler
 {
@@ -102,7 +119,9 @@ private:
     int scopeDepth;
     Local locals_[MAX_LOCALS];
     int localCount_;
-    std::vector<LoopContext> loopContexts; // Stack of loop contexts
+  
+    LoopContext loopContexts_[MAX_LOOP_DEPTH];
+    int loopDepth_;
 
     // Token management
     void advance();

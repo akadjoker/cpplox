@@ -20,7 +20,7 @@ ParseRule Compiler::rules[TOKEN_COUNT];
 
 Compiler::Compiler(VM *vm)
     : vm_(vm), lexer(nullptr), function(nullptr), currentChunk(nullptr),
-      hadError(false), panicMode(false), scopeDepth(0), localCount_(0)
+      hadError(false), panicMode(false), scopeDepth(0), localCount_(0), loopDepth_(0) 
 {
 
     initRules();
@@ -168,6 +168,7 @@ void Compiler::clear()
     panicMode = false;
     scopeDepth = 0;
     localCount_ = 0;
+    loopDepth_ = 0;
 }
 
 // ============================================
@@ -836,7 +837,7 @@ void Compiler::markInitialized()
 {
     if (scopeDepth == 0)
         return;
-    
+
     if (localCount_ == 0)
     {
         error("Internal error: marking uninitialized with no locals");
@@ -981,60 +982,64 @@ void Compiler::ifStatement()
 
 void Compiler::beginLoop(int loopStart)
 {
-    LoopContext ctx;
-    ctx.loopStart = loopStart;
-    ctx.scopeDepth = scopeDepth;
-    loopContexts.push_back(ctx);
+    if (loopDepth_ >= MAX_LOOP_DEPTH)
+    {
+        error("Too many nested loops");
+        return;
+    }
+
+    loopContexts_[loopDepth_].loopStart = loopStart;
+    loopContexts_[loopDepth_].scopeDepth = scopeDepth;
+    loopContexts_[loopDepth_].breakCount = 0;
+    loopDepth_++;
 }
 
 void Compiler::endLoop()
 {
-    if (loopContexts.empty())
+    if (loopDepth_ == 0)
     {
         error("Internal error: endLoop without beginLoop");
         return;
     }
-
-    // Patch todos os breaks para apontarem AQUI (fim do loop)
-    LoopContext &ctx = loopContexts.back();
-    for (int jump : ctx.breakJumps)
+    loopDepth_--;
+    LoopContext &ctx = loopContexts_[loopDepth_];
+    for (int i = 0; i < ctx.breakCount; i++)
     {
-        patchJump(jump);
+        patchJump(ctx.breakJumps[i]);
     }
-
-    loopContexts.pop_back();
 }
+
 void Compiler::emitBreak()
 {
-    if (loopContexts.empty())
+    if (loopDepth_ == 0)
     {
         error("Cannot use 'break' outside of a loop");
         return;
     }
+    LoopContext &ctx = loopContexts_[loopDepth_ - 1];
 
-    LoopContext &ctx = loopContexts.back();
-
-     while (localCount_ > 0 && locals_[localCount_ - 1].depth > ctx.scopeDepth)
+    while (localCount_ > 0 && locals_[localCount_ - 1].depth > ctx.scopeDepth)
     {
         emitByte(OP_POP);
         localCount_--;
     }
-   
 
-    ctx.breakJumps.push_back(emitJump(OP_JUMP));
+    if(!ctx.addBreak(emitJump(OP_JUMP)))
+    {
+        error("Too many breaks");
+    }
 }
 
 void Compiler::emitContinue()
 {
-    if (loopContexts.empty())
+    if (loopDepth_ == 0)
     {
         error("Cannot use 'continue' outside of a loop");
         return;
     }
+    LoopContext &ctx = loopContexts_[loopDepth_ - 1];
 
-    LoopContext &ctx = loopContexts.back();
-
-     while (localCount_ > 0 && locals_[localCount_ - 1].depth > ctx.scopeDepth)
+    while (localCount_ > 0 && locals_[localCount_ - 1].depth > ctx.scopeDepth)
     {
         emitByte(OP_POP);
         localCount_--;
@@ -1126,7 +1131,7 @@ void Compiler::switchStatement()
 
     // Variável temporária para guardar o valor do switch
     int switchValueSlot = -1;
-    
+
     if (scopeDepth > 0)
     {
         // Local: adiciona variável temporária
@@ -1134,13 +1139,13 @@ void Compiler::switchStatement()
         temp.lexeme = "__switch_temp__";
         addLocal(temp);
         markInitialized();
-        
+
         // ❌ REMOVE:
         // switchValueSlot = locals.size() - 1;
-        
+
         // ✅ ADICIONA:
         switchValueSlot = localCount_ - 1;
-        
+
         emitBytes(OP_SET_LOCAL, (uint8_t)switchValueSlot);
     }
     else
@@ -1150,7 +1155,7 @@ void Compiler::switchStatement()
         uint8_t globalIdx = makeConstant(Value::makeString(tempName));
         emitBytes(OP_DEFINE_GLOBAL, globalIdx);
     }
-    
+
     std::vector<int> caseEndJumps;
     int defaultStart = -1;
     bool hasDefault = false;
@@ -1161,7 +1166,7 @@ void Compiler::switchStatement()
         if (match(TOKEN_CASE))
         {
             // case VALUE:
-            
+
             // Carrega valor do switch
             if (switchValueSlot != -1)
             {
@@ -1203,7 +1208,7 @@ void Compiler::switchStatement()
         {
             // default:
             consume(TOKEN_COLON, "Expect ':' after 'default'");
-            
+
             if (hasDefault)
             {
                 error("Switch can only have one 'default' case");
@@ -1430,7 +1435,7 @@ void Compiler::compileFunction(const std::string &name)
         error("Function with this name already registered");
         return;
     }
-    
+
     Function *function = new Function(name, 0);
     uint16_t idx = vm_->registerFunction(name, function);
 
@@ -1438,8 +1443,7 @@ void Compiler::compileFunction(const std::string &name)
     Function *enclosingFunction = this->function;
     Chunk *enclosingChunk = this->currentChunk;
     int enclosingScopeDepth = this->scopeDepth;
-    
- 
+
     Local enclosingLocals[MAX_LOCALS];
     int enclosingLocalCount = this->localCount_;
     std::memcpy(enclosingLocals, locals_, sizeof(Local) * localCount_);
@@ -1448,17 +1452,16 @@ void Compiler::compileFunction(const std::string &name)
     this->function = function;
     this->currentChunk = &function->chunk;
     this->scopeDepth = 0;
-    
- 
+
     this->localCount_ = 0;
-    
+
     function->hasReturn = false;
 
     // Parse parâmetros
     beginScope();
-    
+
     consume(TOKEN_LPAREN, "Expect '(' after function name");
-    
+
     if (!check(TOKEN_RPAREN))
     {
         do
@@ -1469,20 +1472,20 @@ void Compiler::compileFunction(const std::string &name)
                 error("Can't have more than 255 parameters");
                 break;
             }
-            
+
             consume(TOKEN_IDENTIFIER, "Expect parameter name");
             addLocal(previous);
             markInitialized();
-            
+
         } while (match(TOKEN_COMMA));
     }
-    
+
     consume(TOKEN_RPAREN, "Expect ')' after parameters");
 
     // Parse corpo
     consume(TOKEN_LBRACE, "Expect '{' before function body");
     block();
-    
+
     if (!function->hasReturn)
     {
         emitReturn();
@@ -1492,14 +1495,12 @@ void Compiler::compileFunction(const std::string &name)
     this->function = enclosingFunction;
     this->currentChunk = enclosingChunk;
     this->scopeDepth = enclosingScopeDepth;
-    
- 
+
     this->localCount_ = enclosingLocalCount;
     std::memcpy(locals_, enclosingLocals, sizeof(Local) * localCount_);
 
     emitBytes(OP_CONSTANT, makeConstant(Value::makeFunction(idx)));
 }
-
 
 void Compiler::prefixIncrement(bool canAssign)
 {
