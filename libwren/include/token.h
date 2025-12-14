@@ -25,6 +25,13 @@ enum TokenType
     TOKEN_RETURN,
     TOKEN_BREAK,
     TOKEN_CONTINUE,
+    TOKEN_DO,
+    TOKEN_LOOP,
+    TOKEN_SWITCH,
+    TOKEN_CASE,
+    TOKEN_DEFAULT,
+    
+
 
     // Operators - Arithmetic
     TOKEN_PLUS,
@@ -55,17 +62,18 @@ enum TokenType
     TOKEN_COMMA,
     TOKEN_SEMICOLON,
 
-    // Compound assignment
-    TOKEN_PLUS_EQUAL,    // +=
-    TOKEN_MINUS_EQUAL,   // -=
-    TOKEN_STAR_EQUAL,    // *=
-    TOKEN_SLASH_EQUAL,   // /=
-    TOKEN_PERCENT_EQUAL, // %=
-
+ // Compound assignment
+    TOKEN_PLUS_EQUAL,      // +=
+    TOKEN_MINUS_EQUAL,     // -=
+    TOKEN_STAR_EQUAL,      // *=
+    TOKEN_SLASH_EQUAL,     // /=
+    TOKEN_PERCENT_EQUAL,   // %=
+    
     // Increment/Decrement
-    TOKEN_PLUS_PLUS,   // ++
-    TOKEN_MINUS_MINUS, // --
+    TOKEN_PLUS_PLUS,       // ++
+    TOKEN_MINUS_MINUS,     // --
 
+    TOKEN_COLON,           // :
     // Built-ins
     TOKEN_PRINT,
     TOKEN_TYPE,

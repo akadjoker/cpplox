@@ -6,6 +6,13 @@ void Chunk::write(uint8_t byte, int line)
     lines.push_back(line);
 }
 
+Chunk::Chunk()
+{
+    code.reserve(256);  
+    constants.reserve(64);
+    lines.reserve(256);
+}
+
 const char *Chunk::getStringPtr(size_t index) const
 {
     const Value &v = constants[index];

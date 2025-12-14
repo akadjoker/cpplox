@@ -20,7 +20,7 @@ ParseRule Compiler::rules[TOKEN_COUNT];
 
 Compiler::Compiler(VM *vm)
     : vm_(vm), lexer(nullptr), function(nullptr), currentChunk(nullptr),
-      hadError(false), panicMode(false), scopeDepth(0)
+      hadError(false), panicMode(false), scopeDepth(0), localCount_(0), loopDepth_(0) 
 {
 
     initRules();
@@ -65,6 +65,9 @@ void Compiler::initRules()
     rules[TOKEN_LESS_EQUAL] = {nullptr, &Compiler::binary, PREC_COMPARISON};
     rules[TOKEN_GREATER] = {nullptr, &Compiler::binary, PREC_COMPARISON};
     rules[TOKEN_GREATER_EQUAL] = {nullptr, &Compiler::binary, PREC_COMPARISON};
+
+    rules[TOKEN_PLUS_PLUS] = {&Compiler::prefixIncrement, nullptr, PREC_NONE};
+    rules[TOKEN_MINUS_MINUS] = {&Compiler::prefixDecrement, nullptr, PREC_NONE};
 
     // Logical
     rules[TOKEN_AND_AND] = {nullptr, &Compiler::and_, PREC_AND};
@@ -164,7 +167,8 @@ void Compiler::clear()
     hadError = false;
     panicMode = false;
     scopeDepth = 0;
-    locals.clear();
+    localCount_ = 0;
+    loopDepth_ = 0;
 }
 
 // ============================================
@@ -548,6 +552,14 @@ void Compiler::statement()
     {
         whileStatement();
     }
+    else if (match(TOKEN_DO))
+    {
+        doWhileStatement();
+    }
+    else if (match(TOKEN_LOOP))
+    {
+        loopStatement();
+    }
     else if (match(TOKEN_FOR))
     {
         forStatement();
@@ -555,6 +567,10 @@ void Compiler::statement()
     else if (match(TOKEN_BREAK))
     {
         breakStatement();
+    }
+    else if (match(TOKEN_SWITCH))
+    {
+        switchStatement();
     }
     else if (match(TOKEN_CONTINUE))
     {
@@ -622,7 +638,24 @@ void Compiler::varDeclaration()
 
 void Compiler::variable(bool canAssign)
 {
-    namedVariable(previous, canAssign);
+    Token name = previous;
+
+    if (check(TOKEN_LPAREN))
+    {
+        const char *interned = StringPool::instance().intern(name.lexeme);
+
+        if (vm_->natives_.hasFunction(interned))
+        {
+            advance(); // Consome '('
+            uint8_t argCount = argumentList();
+            uint8_t nameIdx = makeConstant(Value::makeString(interned));
+            emitBytes(OP_CALL_NATIVE, nameIdx);
+            emitByte(argCount);
+            return;
+        }
+    }
+
+    namedVariable(name, canAssign);
 }
 
 void Compiler::and_(bool canAssign)
@@ -651,6 +684,7 @@ uint8_t Compiler::identifierConstant(Token &name)
     const char *interned = StringPool::instance().intern(name.lexeme);
     return makeConstant(Value::makeString(interned));
 }
+
 void Compiler::namedVariable(Token &name, bool canAssign)
 {
     uint8_t getOp, setOp;
@@ -658,25 +692,80 @@ void Compiler::namedVariable(Token &name, bool canAssign)
 
     if (arg != -1)
     {
-
         getOp = OP_GET_LOCAL;
         setOp = OP_SET_LOCAL;
     }
     else
     {
-        // Global variable
         arg = identifierConstant(name);
         getOp = OP_GET_GLOBAL;
         setOp = OP_SET_GLOBAL;
     }
+    Token varName = name;
 
-    if (canAssign && match(TOKEN_EQUAL))
+    if (match(TOKEN_PLUS_PLUS))
+    {
+        // i++ (postfix)
+        emitBytes(getOp, (uint8_t)arg);
+        emitBytes(getOp, (uint8_t)arg);
+        emitConstant(Value::makeInt(1));
+        emitByte(OP_ADD);
+        emitBytes(setOp, (uint8_t)arg);
+        emitByte(OP_POP);
+    }
+    else if (match(TOKEN_MINUS_MINUS))
+    {
+        // i-- (postfix)
+        emitBytes(getOp, (uint8_t)arg);  // Lê i → Stack: [5]
+        emitBytes(getOp, (uint8_t)arg);  // Lê i → Stack: [5, 5]
+        emitConstant(Value::makeInt(1)); // Stack: [5, 5, 1]
+        emitByte(OP_SUBTRACT);           // Stack: [5, 4]
+        emitBytes(setOp, (uint8_t)arg);  // Guarda 4, Stack: [5, 4]
+        emitByte(OP_POP);                // Stack: [5]
+    }
+    else if (canAssign && match(TOKEN_EQUAL))
     {
         expression();
         emitBytes(setOp, (uint8_t)arg);
     }
+    else if (canAssign && match(TOKEN_PLUS_EQUAL))
+    {
+        emitBytes(getOp, (uint8_t)arg);
+        expression();
+        emitByte(OP_ADD);
+        emitBytes(setOp, (uint8_t)arg);
+    }
+    else if (canAssign && match(TOKEN_MINUS_EQUAL))
+    {
+        emitBytes(getOp, (uint8_t)arg);
+        expression();
+        emitByte(OP_SUBTRACT);
+        emitBytes(setOp, (uint8_t)arg);
+    }
+    else if (canAssign && match(TOKEN_STAR_EQUAL))
+    {
+        emitBytes(getOp, (uint8_t)arg);
+        expression();
+        emitByte(OP_MULTIPLY);
+        emitBytes(setOp, (uint8_t)arg);
+    }
+    else if (canAssign && match(TOKEN_SLASH_EQUAL))
+    {
+        emitBytes(getOp, (uint8_t)arg);
+        expression();
+        emitByte(OP_DIVIDE);
+        emitBytes(setOp, (uint8_t)arg);
+    }
+    else if (canAssign && match(TOKEN_PERCENT_EQUAL))
+    {
+        emitBytes(getOp, (uint8_t)arg);
+        expression();
+        emitByte(OP_MODULO);
+        emitBytes(setOp, (uint8_t)arg);
+    }
     else
     {
+        // Leitura normal
         emitBytes(getOp, (uint8_t)arg);
     }
 }
@@ -696,20 +785,20 @@ void Compiler::defineVariable(uint8_t global)
 void Compiler::declareVariable()
 {
     if (scopeDepth == 0)
-        return; // Global
+        return;
 
     Token &name = previous;
 
-    // Check for duplicate in current scope
-    for (int i = locals.size() - 1; i >= 0; i--)
+    for (int i = localCount_ - 1; i >= 0; i--)
     {
-        Local &local = locals[i];
+        Local &local = locals_[i];
+
         if (local.depth != -1 && local.depth < scopeDepth)
         {
-            break; // Left current scope
+            break;
         }
 
-        if (name.lexeme == local.name)
+        if (local.equals(name.lexeme))
         {
             error("Variable with this name already declared in this scope");
         }
@@ -720,38 +809,55 @@ void Compiler::declareVariable()
 
 void Compiler::addLocal(Token &name)
 {
-    if (locals.size() >= UINT8_MAX)
+    if (localCount_ >= MAX_LOCALS)
     {
         error("Too many local variables in function");
         return;
     }
 
-    locals.emplace_back(name.lexeme, -1); // -1 = uninitialized
+    size_t len = name.lexeme.length();
+
+    if (len >= MAX_IDENTIFIER_LENGTH)
+    {
+        error("Identifier name too long (max 31 characters)");
+        return;
+    }
+
+    // Copia string
+    std::memcpy(locals_[localCount_].name, name.lexeme.c_str(), len);
+    locals_[localCount_].name[len] = '\0';
+
+    locals_[localCount_].length = (uint8_t)len;
+    locals_[localCount_].depth = -1;
+
+    localCount_++;
 }
 
 void Compiler::markInitialized()
 {
     if (scopeDepth == 0)
         return;
-    if (locals.empty())
+
+    if (localCount_ == 0)
     {
         error("Internal error: marking uninitialized with no locals");
         return;
     }
-    locals.back().depth = scopeDepth;
+    locals_[localCount_ - 1].depth = scopeDepth;
 }
 
 void Compiler::beginScope()
 {
     scopeDepth++;
 }
+
 int Compiler::resolveLocal(Token &name)
 {
-    // Search backwards (innermost scope first)
-    for (int i = locals.size() - 1; i >= 0; i--)
+    for (int i = localCount_ - 1; i >= 0; i--)
     {
-        Local &local = locals[i];
-        if (name.lexeme == local.name)
+        Local &local = locals_[i];
+
+        if (local.equals(name.lexeme))
         {
             if (local.depth == -1)
             {
@@ -761,18 +867,17 @@ int Compiler::resolveLocal(Token &name)
         }
     }
 
-    return -1; // Not found
+    return -1;
 }
+
 void Compiler::endScope()
 {
     scopeDepth--;
 
-    // Pop all locals from this scope
-    while (!locals.empty() &&
-           locals.back().depth > scopeDepth)
+    while (localCount_ > 0 && locals_[localCount_ - 1].depth > scopeDepth)
     {
         emitByte(OP_POP);
-        locals.pop_back();
+        localCount_--;
     }
 }
 
@@ -858,7 +963,7 @@ void Compiler::ifStatement()
 //     // Then branch
 //     statement();  // Compila o bloco then
 
-//     // Jump para pular o else
+//     // Jump para saltar o else
 //     int elseJump = emitJump(OP_JUMP);
 
 //     // Patch do thenJump (aponta aqui se condição for falsa)
@@ -877,75 +982,67 @@ void Compiler::ifStatement()
 
 void Compiler::beginLoop(int loopStart)
 {
-    LoopContext ctx;
-    ctx.loopStart = loopStart;
-    ctx.scopeDepth = scopeDepth;
-    loopContexts.push_back(ctx);
+    if (loopDepth_ >= MAX_LOOP_DEPTH)
+    {
+        error("Too many nested loops");
+        return;
+    }
+
+    loopContexts_[loopDepth_].loopStart = loopStart;
+    loopContexts_[loopDepth_].scopeDepth = scopeDepth;
+    loopContexts_[loopDepth_].breakCount = 0;
+    loopDepth_++;
 }
 
 void Compiler::endLoop()
 {
-    if (loopContexts.empty())
+    if (loopDepth_ == 0)
     {
         error("Internal error: endLoop without beginLoop");
         return;
     }
-
-    // Patch todos os breaks para apontarem AQUI (fim do loop)
-    LoopContext &ctx = loopContexts.back();
-    for (int jump : ctx.breakJumps)
+    loopDepth_--;
+    LoopContext &ctx = loopContexts_[loopDepth_];
+    for (int i = 0; i < ctx.breakCount; i++)
     {
-        patchJump(jump);
+        patchJump(ctx.breakJumps[i]);
     }
-
-    loopContexts.pop_back();
 }
+
 void Compiler::emitBreak()
 {
-    if (loopContexts.empty())
+    if (loopDepth_ == 0)
     {
         error("Cannot use 'break' outside of a loop");
         return;
     }
+    LoopContext &ctx = loopContexts_[loopDepth_ - 1];
 
-    LoopContext &ctx = loopContexts.back();
-
-    // Pop variáveis criadas DENTRO do loop (depth > loop depth)
-    while (!locals.empty() && locals.back().depth > ctx.scopeDepth)
+    while (localCount_ > 0 && locals_[localCount_ - 1].depth > ctx.scopeDepth)
     {
         emitByte(OP_POP);
-        locals.pop_back();
+        localCount_--;
     }
 
-    ctx.breakJumps.push_back(emitJump(OP_JUMP));
+    if(!ctx.addBreak(emitJump(OP_JUMP)))
+    {
+        error("Too many breaks");
+    }
 }
 
 void Compiler::emitContinue()
 {
-    if (loopContexts.empty())
+    if (loopDepth_ == 0)
     {
         error("Cannot use 'continue' outside of a loop");
         return;
     }
+    LoopContext &ctx = loopContexts_[loopDepth_ - 1];
 
-    LoopContext &ctx = loopContexts.back();
-
-    // printf("DEBUG emitContinue: scopeDepth=%d, ctx.scopeDepth=%d, locals.size()=%zu\n",
-    //        scopeDepth, ctx.scopeDepth, locals.size());
-    // for (size_t i = 0; i < locals.size(); i++)
-    // {
-    //     printf("  local[%zu]: name='%s', depth=%d\n",
-    //            i, locals[i].name.c_str(), locals[i].depth);
-    // }
-
-    // Pop variáveis criadas DENTRO do loop (depth > loop depth)
-    while (!locals.empty() && locals.back().depth > ctx.scopeDepth)
+    while (localCount_ > 0 && locals_[localCount_ - 1].depth > ctx.scopeDepth)
     {
-
-        // printf("  POP local: %s (depth %d)\n",
-        //        locals.back().name.c_str(), locals.back().depth);
         emitByte(OP_POP);
-        locals.pop_back();
+        localCount_--;
     }
 
     emitLoop(ctx.loopStart);
@@ -973,6 +1070,179 @@ void Compiler::whileStatement()
     patchJump(exitJump);
     emitByte(OP_POP);
 }
+void Compiler::doWhileStatement()
+{
+    // do
+    consume(TOKEN_LBRACE, "Expect '{' after 'do'");
+
+    int loopStart = currentChunk->count();
+
+    beginLoop(loopStart);
+
+    // BODY (executa primeiro)
+    beginScope();
+    block();
+    endScope();
+
+    // while (condition)
+    consume(TOKEN_WHILE, "Expect 'while' after do body");
+    consume(TOKEN_LPAREN, "Expect '(' after 'while'");
+    expression(); // Condição
+    consume(TOKEN_RPAREN, "Expect ')' after condition");
+    consume(TOKEN_SEMICOLON, "Expect ';' after do-while");
+
+    // Se condição for TRUE, volta ao início
+    int exitJump = emitJump(OP_JUMP_IF_FALSE);
+    emitByte(OP_POP); // Pop se true
+    emitLoop(loopStart);
+
+    patchJump(exitJump);
+    emitByte(OP_POP); // Pop se false
+
+    endLoop();
+}
+
+void Compiler::loopStatement()
+{
+    // loop { ... }
+
+    int loopStart = currentChunk->count();
+
+    beginLoop(loopStart);
+
+    // Body
+    consume(TOKEN_LBRACE, "Expect '{' after 'loop'");
+    beginScope();
+    block();
+    endScope();
+
+    // Volta sempre ao início (loop infinito)
+    emitLoop(loopStart);
+
+    // Patch dos breaks (única forma de sair!)
+    endLoop();
+}
+void Compiler::switchStatement()
+{
+    consume(TOKEN_LPAREN, "Expect '(' after 'switch'");
+    expression(); // Valor do switch fica na stack
+    consume(TOKEN_RPAREN, "Expect ')' after switch expression");
+    consume(TOKEN_LBRACE, "Expect '{' before switch body");
+
+    // Variável temporária para guardar o valor do switch
+    int switchValueSlot = -1;
+
+    if (scopeDepth > 0)
+    {
+        // Local: adiciona variável temporária
+        Token temp;
+        temp.lexeme = "__switch_temp__";
+        addLocal(temp);
+        markInitialized();
+ 
+        switchValueSlot = localCount_ - 1;
+
+        emitBytes(OP_SET_LOCAL, (uint8_t)switchValueSlot);
+    }
+    else
+    {
+        // Global: cria variável temporária
+        const char *tempName = StringPool::instance().intern("__switch_temp__");
+        uint8_t globalIdx = makeConstant(Value::makeString(tempName));
+        emitBytes(OP_DEFINE_GLOBAL, globalIdx);
+    }
+
+    std::vector<int> caseEndJumps;
+    int defaultStart = -1;
+    bool hasDefault = false;
+
+    // Parse todos os cases
+    while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF))
+    {
+        if (match(TOKEN_CASE))
+        {
+            // case VALUE:
+
+            // Carrega valor do switch
+            if (switchValueSlot != -1)
+            {
+                emitBytes(OP_GET_LOCAL, (uint8_t)switchValueSlot);
+            }
+            else
+            {
+                const char *tempName = StringPool::instance().intern("__switch_temp__");
+                uint8_t globalIdx = makeConstant(Value::makeString(tempName));
+                emitBytes(OP_GET_GLOBAL, globalIdx);
+            }
+
+            // Valor do case
+            expression();
+            consume(TOKEN_COLON, "Expect ':' after case value");
+
+            // Compara
+            emitByte(OP_EQUAL);
+
+            // Se NÃO for igual, salta este case
+            int skipCase = emitJump(OP_JUMP_IF_FALSE);
+            emitByte(OP_POP);
+
+            // Executa statements do case
+            while (!check(TOKEN_CASE) && !check(TOKEN_DEFAULT) &&
+                   !check(TOKEN_RBRACE) && !check(TOKEN_EOF))
+            {
+                statement();
+            }
+
+            // Break implícito - salta para o fim
+            caseEndJumps.push_back(emitJump(OP_JUMP));
+
+            // Se não era igual, salta para aqui (próximo case)
+            patchJump(skipCase);
+            emitByte(OP_POP);
+        }
+        else if (match(TOKEN_DEFAULT))
+        {
+            // default:
+            consume(TOKEN_COLON, "Expect ':' after 'default'");
+
+            if (hasDefault)
+            {
+                error("Switch can only have one 'default' case");
+            }
+            hasDefault = true;
+
+            // Executa statements
+            while (!check(TOKEN_CASE) && !check(TOKEN_RBRACE) && !check(TOKEN_EOF))
+            {
+                statement();
+            }
+        }
+        else
+        {
+            errorAtCurrent("Expect 'case' or 'default' in switch body");
+            break;
+        }
+    }
+
+    consume(TOKEN_RBRACE, "Expect '}' after switch body");
+
+    // Patch todos os jumps de fim de case
+    for (int jump : caseEndJumps)
+    {
+        patchJump(jump);
+    }
+
+    // Limpa variável temporária do switch
+    if (switchValueSlot != -1)
+    {
+        // Local - já vai ser limpo pelo endScope se necessário
+    }
+    else
+    {
+        // Global - podemos deixar (ou limpar )
+    }
+}
+
 void Compiler::breakStatement()
 {
     emitBreak();
@@ -1017,7 +1287,7 @@ void Compiler::forStatement()
         expression(); // i < 10
         consume(TOKEN_SEMICOLON, "Expect ';' after loop condition");
 
-        // Pula para fora se condição for falsa
+        // salta para fora se condição for falsa
         exitJump = emitJump(OP_JUMP_IF_FALSE);
         emitByte(OP_POP); // Pop da condição
     }
@@ -1028,10 +1298,10 @@ void Compiler::forStatement()
 
     // INCREMENT (opcional)
     // Problema: increment vem ANTES do body no código, mas executa DEPOIS
-    // Solução: pular o increment, executar body, depois voltar pro increment
+    // Solução: saltar o increment, executar body, depois voltar pro increment
     if (!check(TOKEN_RPAREN))
     {
-        // Pula sobre o código do increment
+        // salta sobre o código do increment
         int bodyJump = emitJump(OP_JUMP);
 
         int incrementStart = currentChunk->count();
@@ -1045,7 +1315,7 @@ void Compiler::forStatement()
         // Agora loopStart aponta para o increment (para continue)
         loopStart = incrementStart;
 
-        // Patch do bodyJump para pular o increment
+        // Patch do bodyJump para saltar o increment
         patchJump(bodyJump);
     }
     else
@@ -1154,7 +1424,6 @@ void Compiler::funDeclaration()
     // 4. Define variable
     defineVariable(nameConstant);
 }
-
 void Compiler::compileFunction(const std::string &name)
 {
     if (!vm_->canRegisterFunction(name))
@@ -1164,24 +1433,28 @@ void Compiler::compileFunction(const std::string &name)
     }
 
     Function *function = new Function(name, 0);
-
     uint16_t idx = vm_->registerFunction(name, function);
 
     // Salvar estado do compiler atual
     Function *enclosingFunction = this->function;
     Chunk *enclosingChunk = this->currentChunk;
     int enclosingScopeDepth = this->scopeDepth;
-    std::vector<Local> enclosingLocals = this->locals;
+
+    Local enclosingLocals[MAX_LOCALS];
+    int enclosingLocalCount = this->localCount_;
+    std::memcpy(enclosingLocals, locals_, sizeof(Local) * localCount_);
 
     // Mudar para compilar a função
     this->function = function;
     this->currentChunk = &function->chunk;
     this->scopeDepth = 0;
-    this->locals.clear();
+
+    this->localCount_ = 0;
+
     function->hasReturn = false;
 
     // Parse parâmetros
-    beginScope(); // Scope para parâmetros
+    beginScope();
 
     consume(TOKEN_LPAREN, "Expect '(' after function name");
 
@@ -1190,7 +1463,6 @@ void Compiler::compileFunction(const std::string &name)
         do
         {
             function->arity++;
-
             if (function->arity > 255)
             {
                 error("Can't have more than 255 parameters");
@@ -1219,8 +1491,84 @@ void Compiler::compileFunction(const std::string &name)
     this->function = enclosingFunction;
     this->currentChunk = enclosingChunk;
     this->scopeDepth = enclosingScopeDepth;
-    this->locals = enclosingLocals;
 
-    // emitBytes(OP_CONSTANT, makeConstant(Value::makeFunction(function)));
+    this->localCount_ = enclosingLocalCount;
+    std::memcpy(locals_, enclosingLocals, sizeof(Local) * localCount_);
+
     emitBytes(OP_CONSTANT, makeConstant(Value::makeFunction(idx)));
+}
+
+void Compiler::prefixIncrement(bool canAssign)
+{
+    // ++i
+    // previous = '++', current deve ser identifier
+
+    if (!check(TOKEN_IDENTIFIER))
+    {
+        error("Expect variable name after '++'");
+        return;
+    }
+
+    advance();             // Consome o identifier manualmente
+    Token name = previous; // Agora previous é o identifier
+
+    uint8_t getOp, setOp;
+    int arg = resolveLocal(name);
+
+    if (arg != -1)
+    {
+        getOp = OP_GET_LOCAL;
+        setOp = OP_SET_LOCAL;
+    }
+    else
+    {
+        arg = identifierConstant(name);
+        getOp = OP_GET_GLOBAL;
+        setOp = OP_SET_GLOBAL;
+    }
+
+    // i = i + 1
+    emitBytes(getOp, (uint8_t)arg);
+    emitConstant(Value::makeInt(1));
+    emitByte(OP_ADD);
+    emitBytes(setOp, (uint8_t)arg);
+
+    // Lê o novo valor para retornar
+    emitBytes(getOp, (uint8_t)arg);
+}
+
+void Compiler::prefixDecrement(bool canAssign)
+{
+    // --i
+
+    if (!check(TOKEN_IDENTIFIER))
+    {
+        error("Expect variable name after '--'");
+        return;
+    }
+
+    advance();
+    Token name = previous;
+
+    uint8_t getOp, setOp;
+    int arg = resolveLocal(name);
+
+    if (arg != -1)
+    {
+        getOp = OP_GET_LOCAL;
+        setOp = OP_SET_LOCAL;
+    }
+    else
+    {
+        arg = identifierConstant(name);
+        getOp = OP_GET_GLOBAL;
+        setOp = OP_SET_GLOBAL;
+    }
+
+    emitBytes(getOp, (uint8_t)arg);
+    emitConstant(Value::makeInt(1));
+    emitByte(OP_SUBTRACT);
+    emitBytes(setOp, (uint8_t)arg);
+
+    emitBytes(getOp, (uint8_t)arg);
 }

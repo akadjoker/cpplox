@@ -3,6 +3,8 @@
 #include <cstdio>
 #include <cmath>
 #include <ctime>
+#include <chrono>
+#include <cstring>
 
 void NativeRegistry::registerFunction(const std::string &name, int arity, NativeFunction fn)
 {
@@ -25,12 +27,28 @@ bool NativeRegistry::hasFunction(const std::string &name) const
 }
 
 // Built-in functions
+// static Value nativeClock(VM *vm, int argCount, Value *args)
+// {
+//     (void)vm;
+//     (void)argCount;
+//     (void)args;
+//     return Value::makeDouble((double)clock() / CLOCKS_PER_SEC);
+// }
+
+ 
+
 static Value nativeClock(VM *vm, int argCount, Value *args)
 {
     (void)vm;
     (void)argCount;
     (void)args;
-    return Value::makeDouble((double)clock() / CLOCKS_PER_SEC);
+    
+    // Wall clock time (compatível com Python's time.time())
+    auto now = std::chrono::system_clock::now();
+    auto duration = now.time_since_epoch();
+    double seconds = std::chrono::duration<double>(duration).count();
+    
+    return Value::makeDouble(seconds);
 }
 
 static Value nativePrint(VM *vm, int argCount, Value *args)

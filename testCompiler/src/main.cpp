@@ -1246,7 +1246,7 @@ TEST(for_loop_nested)
 TEST(for_loop_scope_isolation)
 {
     std::string code = R"(
-        for (var i = 0; i < 3; i = i + 1) {
+        for (var i = 0; i < 3; i++) {
             var x = i * 10;
         }
         // i e x não existem aqui - não dá erro mas também não são acessíveis
@@ -1255,6 +1255,809 @@ TEST(for_loop_scope_isolation)
     Value result = executeProgram(code, "result");
     ASSERT_EQ(result.asInt(), 42);
 }
+
+
+TEST(compound_assignment_add)
+{
+    std::string code = R"(
+        var x = 10;
+        x += 5;
+    )";
+    Value result = executeProgram(code, "x");
+    ASSERT_EQ(result.asInt(), 15);
+}
+
+TEST(prefix_increment)
+{
+    std::string code = R"(
+        var i = 5;
+        var result = ++i;
+    )";
+    
+    VM vm;
+    vm.interpret(code);
+    
+    vm.GetGlobal( "i");
+    ASSERT_EQ(vm.Pop().asInt(), 6);
+    
+    vm.GetGlobal( "result");
+    ASSERT_EQ(vm.Pop().asInt(), 6);  // Retorna novo valor
+}
+
+TEST(postfix_increment)
+{
+    std::string code = R"(
+        var i = 5;
+        var result = i++;
+    )";
+    
+    VM vm;
+    vm.interpret(code);
+    
+    vm.GetGlobal("i");
+    ASSERT_EQ(vm.Pop().asInt(), 6);
+    
+    vm.GetGlobal("result");
+    ASSERT_EQ(vm.Pop().asInt(), 5);  // Retorna valor antigo
+}
+
+
+// ============================================
+// TESTES DE OPERADORES COM LOOPS
+// ============================================
+
+TEST(operators_increment_in_loop)
+{
+    std::string code = R"(
+        var sum = 0;
+        for (var i = 0; i < 10; i++) {
+            sum += i;
+        }
+    )";
+    Value result = executeProgram(code, "sum");
+    ASSERT_EQ(result.asInt(), 45);  // 0+1+2+...+9
+}
+
+TEST(operators_compound_in_while)
+{
+    std::string code = R"(
+        var x = 1;
+        var count = 0;
+        while (x < 100) {
+            x *= 2;
+            count++;
+        }
+    )";
+    
+    VM vm;
+    vm.interpret(code);
+    
+    vm.GetGlobal("x");
+    ASSERT_EQ(vm.Pop().asInt(), 128);  // 1*2*2*2*2*2*2*2 = 128
+    
+    vm.GetGlobal("count");
+    ASSERT_EQ(vm.Pop().asInt(), 7);
+}
+
+TEST(operators_modulo_in_loop)
+{
+    std::string code = R"(
+        var evens = 0;
+        var odds = 0;
+        for (var i = 0; i < 20; i++) {
+            if (i % 2 == 0) {
+                evens++;
+            } else {
+                odds++;
+            }
+        }
+    )";
+    
+    VM vm;
+    vm.interpret(code);
+    
+    vm.GetGlobal("evens");
+    ASSERT_EQ(vm.Pop().asInt(), 10);
+    
+    vm.GetGlobal("odds");
+    ASSERT_EQ(vm.Pop().asInt(), 10);
+}
+
+TEST(operators_division_accumulate)
+{
+    std::string code = R"(
+        var x = 1000;
+        var steps = 0;
+        while (x > 1) {
+            x /= 2;
+            steps++;
+        }
+    )";
+    
+    VM vm;
+    vm.interpret(code);
+    
+    vm.GetGlobal("x");
+    ASSERT_EQ(vm.Pop().asInt(),     1);  // 1000/2/2/.../2 eventually reaches 0 (int division)
+    
+    vm.GetGlobal("steps");
+    ASSERT_EQ(vm.Pop().asInt(), 9);  // Takes 10 divisions to go from 1000 to 0
+}
+
+TEST(operators_prefix_in_condition)
+{
+    std::string code = R"(
+        var i = 0;
+        var sum = 0;
+        while (++i <= 5) {
+            sum += i;
+        }
+    )";
+    
+    VM vm;
+    vm.interpret(code);
+    
+    vm.GetGlobal("i");
+    ASSERT_EQ(vm.Pop().asInt(), 6);
+    
+    vm.GetGlobal("sum");
+    ASSERT_EQ(vm.Pop().asInt(), 15);  // 1+2+3+4+5
+}
+
+TEST(operators_postfix_in_array_style)
+{
+    std::string code = R"(
+        var index = 0;
+        var sum = 0;
+        
+        // Simula processar 5 elementos
+        sum += index++;  // 0
+        sum += index++;  // 1
+        sum += index++;  // 2
+        sum += index++;  // 3
+        sum += index++;  // 4
+    )";
+    
+    VM vm;
+    vm.interpret(code);
+    
+    vm.GetGlobal("index");
+    ASSERT_EQ(vm.Pop().asInt(), 5);
+    
+    vm.GetGlobal("sum");
+    ASSERT_EQ(vm.Pop().asInt(), 10);  // 0+1+2+3+4
+}
+
+TEST(operators_mixed_compound_in_loop)
+{
+    std::string code = R"(
+        var a = 10;
+        var b = 2;
+        
+        for (var i = 0; i < 3; i++) {
+            a += 5;   // 15, 20, 25
+            b *= 2;   // 4, 8, 16
+        }
+    )";
+    
+    VM vm;
+    vm.interpret(code);
+    
+    vm.GetGlobal("a");
+    ASSERT_EQ(vm.Pop().asInt(), 25);
+    
+    vm.GetGlobal("b");
+    ASSERT_EQ(vm.Pop().asInt(), 16);
+}
+
+TEST(operators_nested_loops_with_increment)
+{
+    std::string code = R"(
+        var total = 0;
+        for (var i = 0; i < 3; i++) {
+            for (var j = 0; j < 3; j++) {
+                total++;
+            }
+        }
+    )";
+    Value result = executeProgram(code, "total");
+    ASSERT_EQ(result.asInt(), 9);  // 3x3
+}
+
+TEST(operators_fibonacci_with_compound)
+{
+    std::string code = R"(
+        var a = 0;
+        var b = 1;
+        var count = 0;
+        
+        while (count < 10) {
+            var temp = a;
+            a = b;
+            b += temp;
+            count++;
+        }
+    )";
+    
+    VM vm;
+    vm.interpret(code);
+    
+    vm.GetGlobal("a");
+    ASSERT_EQ(vm.Pop().asInt(), 55);  // 10th Fibonacci number
+}
+
+TEST(operators_countdown_with_decrement)
+{
+    std::string code = R"(
+        var n = 10;
+        var sum = 0;
+        
+        while (n > 0) {
+            sum += n--;
+        }
+    )";
+    
+    VM vm;
+    vm.interpret(code);
+    
+    vm.GetGlobal("n");
+   //  printf("DEBUG: n = %d\n", vm.Pop().asInt());
+    ASSERT_EQ(vm.Pop().asInt(), 0);
+    
+    vm.GetGlobal("sum");
+     //  printf("DEBUG: sum = %d\n", vm.Pop().asInt());
+   ASSERT_EQ(vm.Pop().asInt(), 55);  // 10+9+8+...+1
+}
+
+TEST(operators_power_of_two_with_multiply)
+{
+    std::string code = R"(
+        var power = 1;
+        for (var i = 0; i < 10; i++) {
+            power *= 2;
+        }
+    )";
+    Value result = executeProgram(code, "power");
+    ASSERT_EQ(result.asInt(), 1024);  // 2^10
+}
+
+TEST(operators_complex_expression_in_loop)
+{
+    std::string code = R"(
+        var result = 0;
+        for (var i = 1; i <= 5; i++) {
+            result += i * 2 + 3;
+        }
+    )";
+    Value result = executeProgram(code, "result");
+    ASSERT_EQ(result.asInt(), 45);  // (1*2+3) + (2*2+3) + (3*2+3) + (4*2+3) + (5*2+3)
+}
+
+TEST(operators_prefix_vs_postfix_comparison)
+{
+    std::string code = R"(
+        var a = 5;
+        var b = 5;
+        var r1 = ++a;  // a=6, r1=6
+        var r2 = b++;  // b=6, r2=5
+    )";
+    
+    VM vm;
+    vm.interpret(code);
+    
+    vm.GetGlobal("a");
+    ASSERT_EQ(vm.Pop().asInt(), 6);
+    
+    vm.GetGlobal("b");
+    ASSERT_EQ(vm.Pop().asInt(), 6);
+    
+    vm.GetGlobal("r1");
+    ASSERT_EQ(vm.Pop().asInt(), 6);
+    
+    vm.GetGlobal("r2");
+    ASSERT_EQ(vm.Pop().asInt(), 5);
+}
+
+TEST(operators_all_compound_assignments)
+{
+    std::string code = R"(
+        var x = 10;
+        x += 5;   // 15
+        x -= 3;   // 12
+        x *= 2;   // 24
+        x /= 4;   // 6
+        x %= 4;   // 2
+    )";
+    Value result = executeProgram(code, "x");
+    ASSERT_EQ(result.asInt(), 2);
+}
+
+TEST(operators_increment_in_complex_condition)
+{
+    std::string code = R"(
+        var count = 0;
+        var i = 0;
+        
+        while (i++ < 5 && count < 10) {
+            count++;
+        }
+    )";
+    
+    VM vm;
+    vm.interpret(code);
+    
+    vm.GetGlobal("i");
+    ASSERT_EQ(vm.Pop().asInt(), 6);
+    
+    vm.GetGlobal("count");
+    ASSERT_EQ(vm.Pop().asInt(), 5);
+}
+
+TEST(operators_decrement_to_zero)
+{
+    std::string code = R"(
+        var n = 100;
+        var iterations = 0;
+        
+        while (n > 0) {
+            n -= 7;
+            iterations++;
+        }
+    )";
+    
+    VM vm;
+    vm.interpret(code);
+    
+    vm.GetGlobal("iterations");
+    ASSERT_EQ(vm.Pop().asInt(), 15);  // Takes 15 iterations (100/7 rounded up)
+}
+
+TEST(operators_factorial_with_multiply_equals)
+{
+    std::string code = R"(
+        var n = 6;
+        var factorial = 1;
+        
+        while (n > 1) {
+            factorial *= n;
+            n--;
+        }
+    )";
+    Value result = executeProgram(code, "factorial");
+    ASSERT_EQ(result.asInt(), 720);  // 6!
+}
+
+TEST(do_while_executes_once)
+{
+    std::string code = R"(
+        var x = 0;
+        do {
+            x++;
+        } while (false);
+    )";
+    Value result = executeProgram(code, "x");
+    ASSERT_EQ(result.asInt(), 1);  // Executa pelo menos 1 vez
+}
+
+TEST(do_while_loop)
+{
+    std::string code = R"(
+        var i = 0;
+        var sum = 0;
+        do {
+            sum += i;
+            i++;
+        } while (i < 5);
+    )";
+    Value result = executeProgram(code, "sum");
+    ASSERT_EQ(result.asInt(), 10);  // 0+1+2+3+4
+}
+
+TEST(loop_infinite_with_break)
+{
+    std::string code = R"(
+        var count = 0;
+        loop {
+            count++;
+            if (count >= 5) {
+                break;
+            }
+        }
+    )";
+    Value result = executeProgram(code, "count");
+    ASSERT_EQ(result.asInt(), 5);
+}
+
+TEST(loop_with_condition_break)
+{
+    std::string code = R"(
+        var i = 0;
+        var sum = 0;
+        loop {
+            if (i >= 10) {
+                break;
+            }
+            sum += i;
+            i++;
+        }
+    )";
+    Value result = executeProgram(code, "sum");
+    ASSERT_EQ(result.asInt(), 45);  // 0+1+2+...+9
+}
+
+TEST(loop_with_continue)
+{
+    std::string code = R"(
+        var i = 0;
+        var sum = 0;
+        loop {
+            i++;
+            if (i > 10) {
+                break;
+            }
+            if (i % 2 == 0) {
+                continue;
+            }
+            sum += i;
+        }
+    )";
+    Value result = executeProgram(code, "sum");
+    ASSERT_EQ(result.asInt(), 25);  // 1+3+5+7+9
+}
+
+TEST(loop_nested)
+{
+    std::string code = R"(
+        var outer = 0;
+        var inner = 0;
+        loop {
+            outer++;
+            if (outer > 3) {
+                break;
+            }
+            loop {
+                inner++;
+                if (inner >= outer * 2) {
+                    break;
+                }
+            }
+        }
+    )";
+    
+    VM vm;
+    vm.interpret(code);
+    
+    vm.GetGlobal("outer");
+    ASSERT_EQ(vm.Pop().asInt(), 4);
+    
+    vm.GetGlobal("inner");
+    ASSERT_EQ(vm.Pop().asInt(), 6);  // 2 + 4 (soma dos limites)
+}
+
+TEST(loop_simulating_while)
+{
+    std::string code = R"(
+        var n = 10;
+        var factorial = 1;
+        loop {
+            if (n <= 1) {
+                break;
+            }
+            factorial *= n;
+            n--;
+        }
+    )";
+    Value result = executeProgram(code, "factorial");
+    ASSERT_EQ(result.asInt(), 3628800);  // 10!
+}
+
+TEST(loop_early_exit)
+{
+    std::string code = R"(
+        var found = false;
+        var i = 0;
+        loop {
+            i++;
+            if (i == 42) {
+                found = true;
+                break;
+            }
+            if (i > 100) {
+                break;
+            }
+        }
+    )";
+    
+    VM vm;
+    vm.interpret(code);
+    
+    vm.GetGlobal("found");
+    ASSERT_TRUE(vm.Pop().asBool());
+    
+    vm.GetGlobal("i");
+    ASSERT_EQ(vm.Pop().asInt(), 42);
+}
+
+
+TEST(switch_simple)
+{
+    std::string code = R"(
+        var x = 2;
+        var result = 0;
+        switch (x) {
+            case 1:
+                result = 10;
+            case 2:
+                result = 20;
+            case 3:
+                result = 30;
+            default:
+                result = 99;
+        }
+    )";
+    Value result = executeProgram(code, "result");
+    ASSERT_EQ(result.asInt(), 20);
+}
+
+TEST(switch_default)
+{
+    std::string code = R"(
+        var x = 99;
+        var result = 0;
+        switch (x) {
+            case 1:
+                result = 10;
+            case 2:
+                result = 20;
+            default:
+                result = 999;
+        }
+    )";
+    Value result = executeProgram(code, "result");
+    ASSERT_EQ(result.asInt(), 999);
+}
+
+TEST(switch_first_case)
+{
+    std::string code = R"(
+        var x = 1;
+        var result = 0;
+        switch (x) {
+            case 1:
+                result = 100;
+            case 2:
+                result = 200;
+        }
+    )";
+    Value result = executeProgram(code, "result");
+    ASSERT_EQ(result.asInt(), 100);
+}
+
+TEST(switch_with_expressions)
+{
+    std::string code = R"(
+        var x = 5;
+        var result = 0;
+        switch (x * 2) {
+            case 5:
+                result = 1;
+            case 10:
+                result = 2;
+            case 15:
+                result = 3;
+        }
+    )";
+    Value result = executeProgram(code, "result");
+    ASSERT_EQ(result.asInt(), 2);  // 5*2 = 10
+}
+
+TEST(switch_no_match)
+{
+    std::string code = R"(
+        var x = 99;
+        var result = 5;
+        switch (x) {
+            case 1:
+                result = 10;
+            case 2:
+                result = 20;
+        }
+    )";
+    Value result = executeProgram(code, "result");
+    ASSERT_EQ(result.asInt(), 5);  // Não mudou
+}
+
+TEST(switch_ultra_complex)
+{
+    std::string code = R"(
+        def classify(n) {
+            var result = "";
+            switch (n % 3) {
+                case 0:
+                    result = "divisible by 3";
+                case 1:
+                    result = "remainder 1";
+                case 2:
+                    result = "remainder 2";
+                default:
+                    result = "impossible";
+            }
+            return result;
+        }
+        
+        var r1 = classify(9);
+        var r2 = classify(10);
+        var r3 = classify(11);
+    )";
+    
+    VM vm;
+    vm.interpret(code);
+    
+    vm.GetGlobal("r1");
+    ASSERT_EQ(std::string(vm.Pop().asString()), "divisible by 3");
+    
+    vm.GetGlobal("r2");
+    ASSERT_EQ(std::string(vm.Pop().asString()), "remainder 1");
+    
+    vm.GetGlobal("r3");
+    ASSERT_EQ(std::string(vm.Pop().asString()), "remainder 2");
+}
+
+TEST(switch_nested_in_loop)
+{
+    std::string code = R"(
+        var total = 0;
+        for (var i = 0; i < 10; i++) {
+            switch (i % 3) {
+                case 0:
+                    total += 1;
+                case 1:
+                    total += 10;
+                case 2:
+                    total += 100;
+            }
+        }
+    )";
+    Value result = executeProgram(code, "total");
+    // i=0: +1, i=1: +10, i=2: +100
+    // i=3: +1, i=4: +10, i=5: +100
+    // i=6: +1, i=7: +10, i=8: +100
+    // i=9: +1
+    // Total: 4*1 + 3*10 + 3*100 = 4 + 30 + 300 = 334
+    ASSERT_EQ(result.asInt(), 334);
+}
+
+TEST(switch_with_loop_inside_case)
+{
+    std::string code = R"(
+        var x = 2;
+        var sum = 0;
+        switch (x) {
+            case 1:
+                sum = 100;
+            case 2:
+                for (var i = 0; i < 5; i++) {
+                    sum += i;
+                }
+            case 3:
+                sum = 999;
+        }
+    )";
+    Value result = executeProgram(code, "sum");
+    ASSERT_EQ(result.asInt(), 10);  // 0+1+2+3+4
+}
+
+TEST(switch_expression_evaluation)
+{
+    std::string code = R"(
+        var a = 5;
+        var b = 3;
+        var result = 0;
+        switch (a + b) {
+            case 7:
+                result = 1;
+            case 8:
+                result = 2;
+            case 9:
+                result = 3;
+            default:
+                result = -1;
+        }
+    )";
+    Value result = executeProgram(code, "result");
+    ASSERT_EQ(result.asInt(), 2);  // 5+3=8
+}
+
+TEST(switch_all_strings)
+{
+    std::string code = R"(
+        var cmd = "start";
+        var result = 0;
+        switch (cmd) {
+            case "start":
+                result = 1;
+            case "stop":
+                result = 2;
+            case "pause":
+                result = 3;
+            default:
+                result = -1;
+        }
+    )";
+    Value result = executeProgram(code, "result");
+    ASSERT_EQ(result.asInt(), 1);
+}
+
+TEST(switch_no_default_no_match)
+{
+    std::string code = R"(
+        var x = 999;
+        var result = 42;
+        switch (x) {
+            case 1:
+                result = 1;
+            case 2:
+                result = 2;
+        }
+    )";
+    Value result = executeProgram(code, "result");
+    ASSERT_EQ(result.asInt(), 42);  // Não mudou
+}
+
+// TEST(debug_postfix_decrement_alone)
+// {
+//     std::string code = R"(
+//         var n = 10;
+//         var x = n--;
+//         print(n);
+//         print(x);
+//     )";
+    
+//     VM vm;
+//     vm.interpret(code);
+    
+//     vm.GetGlobal("n");
+//     printf("n = %d (should be 9)\n", vm.Pop().asInt());
+    
+//     vm.GetGlobal("x");
+//     printf("x = %d (should be 10)\n", vm.Pop().asInt());
+// }
+
+// TEST(debug_compound_add_with_value)
+// {
+//     std::string code = R"(
+//         var sum = 0;
+//         var val = 5;
+//         sum += val;
+//         print(sum);
+//     )";
+    
+//     VM vm;
+//     vm.interpret(code);
+    
+//     vm.GetGlobal("sum");
+//     printf("sum = %d (should be 5)\n", vm.Pop().asInt());
+// }
+
+// TEST(debug_compound_add_with_postfix)
+// {
+//     std::string code = R"(
+//         var sum = 0;
+//         var n = 5;
+//         sum += n--;
+//         print(sum);
+//         print(n);
+//     )";
+    
+//     VM vm;
+//     vm.interpret(code);
+    
+//     vm.GetGlobal("sum");
+//     printf("sum = %d (should be 5)\n", vm.Pop().asInt());
+    
+//     vm.GetGlobal("n");
+//     printf("n = %d (should be 4)\n", vm.Pop().asInt());
+// }
 
 // ============================================
 // MAIN

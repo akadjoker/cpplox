@@ -66,6 +66,16 @@ const char *tokenTypeToString(TokenType type)
         return "BREAK";
     case TOKEN_CONTINUE:
         return "CONTINUE";
+    case TOKEN_DO:
+        return "DO";
+    case TOKEN_LOOP:
+        return "LOOP";
+    case TOKEN_SWITCH:
+        return "SWITCH";
+    case TOKEN_CASE:
+        return "CASE";
+    case TOKEN_DEFAULT:
+        return "DEFAULT";
 
     case TOKEN_PLUS:
         return "PLUS";
@@ -100,6 +110,9 @@ const char *tokenTypeToString(TokenType type)
         return "OR_OR";
     case TOKEN_BANG:
         return "BANG";
+    case TOKEN_COLON:
+        return "COLON";
+    
 
     case TOKEN_LPAREN:
         return "LPAREN";

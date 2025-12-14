@@ -9,6 +9,7 @@ struct Chunk
     std::vector<uint8_t> code;
     std::vector<Value> constants;
     std::vector<int> lines;
+    Chunk();
 
     const char* getStringPtr(size_t index) const ;
     

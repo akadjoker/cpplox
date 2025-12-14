@@ -5,6 +5,7 @@
 #include "value.h"
 #include <string>
 #include <vector>
+#include <cstring>
 
 class Compiler;
 class VM;
@@ -33,21 +34,66 @@ struct ParseRule
     Precedence prec;
 };
 
+#define MAX_IDENTIFIER_LENGTH 32
+#define MAX_LOCALS 256
+
 struct Local
 {
-    std::string name;
+    char name[MAX_IDENTIFIER_LENGTH];
+    uint8_t length;
     int depth;
 
-    Local(const std::string &n, int d) : name(n), depth(d) {}
+    Local() : length(0), depth(-1)
+    {
+        name[0] = '\0';
+    }
+
+    bool equals(const std::string &str) const
+    {
+
+        if (length != str.length())
+        {
+            return false;
+        }
+
+        return std::memcmp(name, str.c_str(), length) == 0;
+    }
+
+    bool equals(const char *str, size_t len) const
+    {
+        if (length != len)
+        {
+            return false;
+        }
+        return std::memcmp(name, str, length) == 0;
+    }
 };
+
+#define MAX_LOOP_DEPTH 32
+#define MAX_BREAKS_PER_LOOP 256
 
 struct LoopContext
 {
-    int loopStart;               // Onde o loop começa (para continue)
-    std::vector<int> breakJumps; // Lista de breaks para patch depois
-    int scopeDepth;              // Scope depth do loop
+    int loopStart;
+    int breakJumps[MAX_BREAKS_PER_LOOP];
+    int breakCount;
+    int scopeDepth;
+
+    LoopContext() : loopStart(0), breakCount(0), scopeDepth(0) {}
+
+    bool addBreak(int jump)
+    {
+        if (breakCount >= MAX_BREAKS_PER_LOOP)
+        {
+
+            return false;
+        }
+        breakJumps[breakCount++] = jump;
+        return true;
+    }
 };
 
+#define MAX_LOCALS 256
 class Compiler
 {
 public:
@@ -72,8 +118,11 @@ private:
     bool panicMode;
 
     int scopeDepth;
-    std::vector<Local> locals;
-    std::vector<LoopContext> loopContexts;  // Stack of loop contexts
+    Local locals_[MAX_LOCALS];
+    int localCount_;
+  
+    LoopContext loopContexts_[MAX_LOOP_DEPTH];
+    int loopDepth_;
 
     // Token management
     void advance();
@@ -134,9 +183,15 @@ private:
     void printStatement();
     void ifStatement();
     void whileStatement();
+    void doWhileStatement();
+    void loopStatement();
+    void switchStatement();
     void forStatement();
     void returnStatement();
     void block();
+
+    void prefixIncrement(bool canAssign);
+    void prefixDecrement(bool canAssign);
 
     // Variables
     uint8_t identifierConstant(Token &name);

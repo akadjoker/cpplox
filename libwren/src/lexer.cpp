@@ -40,6 +40,11 @@ void Lexer::initKeywords()
         {"return", TOKEN_RETURN},
         {"break", TOKEN_BREAK},
         {"continue", TOKEN_CONTINUE},
+        {"do", TOKEN_DO},
+        {"loop", TOKEN_LOOP},
+        {"switch", TOKEN_SWITCH},
+        {"case", TOKEN_CASE},
+        {"default", TOKEN_DEFAULT},
         {"true", TOKEN_TRUE},
         {"false", TOKEN_FALSE},
         {"nil", TOKEN_NIL},
@@ -393,6 +398,8 @@ Token Lexer::scanToken()
         return makeToken(TOKEN_COMMA, ",");
     case ';':
         return makeToken(TOKEN_SEMICOLON, ";");
+    case ':':
+        return makeToken(TOKEN_COLON, ":");
     
     // Operators com compound assignment e increment/decrement
     case '+':
